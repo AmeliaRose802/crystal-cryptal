@@ -1,0 +1,24 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# `authenticate`
+
+**Signature:** `Bit -> Bit -> Bit -> Bit`
+
+4.3 authenticate
+
+dateValid && signatureValid && claimsValid
+
+### Related Properties
+- [P6 — Auth Requires Valid Date](../properties/authentication-security.md#p6--auth-requires-valid-date)
+- [P7 — Auth Requires Valid Signature](../properties/authentication-security.md#p7--auth-requires-valid-signature)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+authenticate dateValid signatureValid claimsValid =
+  dateValid && signatureValid && claimsValid
+```
+
+</details>

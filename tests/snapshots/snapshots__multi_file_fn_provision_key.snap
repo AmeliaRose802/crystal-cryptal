@@ -1,0 +1,39 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# `provisionKey`
+
+**Signature:** `fleetEnabled validRequest vaultResult keyIsActive`
+
+//////////////////////////////////////////////////////////////////////////////
+4. Decision logic
+//////////////////////////////////////////////////////////////////////////////
+4.1 provisionKey
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | ~ fleetEnabled | [PR_Disabled](../types.md#provisionresult) |
+| 2 | ~ validRequest | [PR_BadRequest](../types.md#provisionresult) |
+| 3 | vaultResult != [KV_Ok](../types.md#keyvaultresult) | [PR_InternalError](../types.md#provisionresult) |
+| 4 | keyIsActive | [PR_Unauthorized](../types.md#provisionresult) |
+| 5 | *(otherwise)* | [PR_Succeeded](../types.md#provisionresult) |
+
+### Related Properties
+- [P2 — Active Prevents Provisioning](../properties/key-lifecycle-safety.md#p2--active-prevents-provisioning)
+- [P5 — Disabled Rejects All](../properties/key-lifecycle-safety.md#p5--disabled-rejects-all)
+- [P15 — Can Provision When Ready](../properties/protocol-liveness.md#p15--can-provision-when-ready)
+- [P20 — Bad Request Distinct](../properties/error-handling.md#p20--bad-request-distinct)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+provisionKey fleetEnabled validRequest vaultResult keyIsActive =
+  if ~ fleetEnabled        then PR_Disabled
+   | ~ validRequest        then PR_BadRequest
+   | vaultResult != KV_Ok  then PR_InternalError
+   | keyIsActive           then PR_Unauthorized
+  else                          PR_Succeeded
+```
+
+</details>

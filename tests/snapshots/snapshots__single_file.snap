@@ -1,0 +1,1092 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# SDEP
+
+Secure Device Enrollment Protocol (SDEP) — Cryptol specification
+
+This module specifies the pure decision logic of SDEP and encodes the
+22 security properties (P1–P22) from spec.md as Cryptol `property`
+declarations suitable for proof with SAW/Z3.
+
+## Types
+
+### FleetMode
+////////////////////////////////////////////////////////////////////////////// 2. Data types ////////////////////////////////////////////////////////////////////////////// 2.1 Enumerations are encoded as small bit-vectors. Only the listed constructor values are considered "well-formed"; properties that range over an enum constrain the input with an `is<Enum>` predicate.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `FM_Disabled` | 0 | |
+| `FM_Enabled` | 1 | |
+
+### KeyVaultResult
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `KV_Ok` | 0 | |
+| `KV_NotFound` | 1 | |
+| `KV_IoError` | 2 | |
+
+### AuthResult
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `AR_Authenticated` | 0 | |
+| `AR_Unauthenticated` | 1 | |
+| `AR_VaultUnavailable` | 2 | |
+
+### ActivationResult
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `AC_Success` | 0 | |
+| `AC_AlreadyActive` | 1 | |
+
+### ProvisionResult
+A 3 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `PR_Succeeded` | 0 | |
+| `PR_Unauthorized` | 1 | |
+| `PR_BadRequest` | 2 | |
+| `PR_Disabled` | 3 | |
+| `PR_InternalError` | 4 | |
+
+### EnrollmentResult
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `ER_Succeeded` | 0 | |
+| `ER_Unauthorized` | 1 | |
+| `ER_Disabled` | 2 | |
+| `ER_InternalError` | 3 | |
+
+### AccessMode
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `AM_Off` | 0 | |
+| `AM_Audit` | 1 | |
+| `AM_Enforce` | 2 | |
+
+### AccessDecision
+A 2 value.
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `AD_Allow` | 0 | |
+| `AD_Deny` | 1 | |
+| `AD_NoRule` | 2 | |
+
+**UUID** — `128` — 2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.
+
+**OptUUID** — `( Bit , UUID )` — Option<UUID> is encoded as a (present?, value) pair.
+
+### EnrollmentStatus
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fleetMode` | [FleetMode](#fleetmode) | |
+| `hasKey` | Bit | |
+| `keyId` | [OptUUID](#optuuid) | |
+| `isActive` | Bit | |
+
+**Timestamp** — `64` — 4.3.1 isValidRequestDate   true iff requestTimestamp <= currentTime          && currentTime - requestTimestamp <= windowSeconds Timestamps and windows are unbounded naturals in spec; we use 64-bit.
+
+**Window** — `64`
+
+**HmacKey** — `256` — 4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC. The Cryptol-level model treats HMAC-SHA256 as an opaque function from (key, payload) to a 256-bit tag, and constantTimeEquals as `==`. The canonicalizePayload step is collapsed into the abstract request value because canonicalization is itself a pure function of the request.
+
+**HmacTag** — `256`
+
+**Request** — `256`
+
+**FL** — `16` — ////////////////////////////////////////////////////////////////////////////// 6. Canonicalization byte-injectivity (string-processing layer)  `canonicalizePayload` in cpp/src/canonical.cpp and rust/src/lib.rs produces the byte string the HMAC is computed over. The protocol's security goal — distinct requests yield distinct HMAC inputs — requires this canonical byte stream to be *injective* in the request. A failure here is exactly the shape of real-world signature-confusion vulnerabilities (AWS SigV4 ambiguity, HTTP request smuggling).  HISTORY. The original SDEP encoder concatenated variable-length fields with a single '\n' delimiter:      method '\n' body '\n' canonHeaders '\n' path '\n' canonQuery  That encoding is NOT injective: a newline smuggled into the body shifts the parse boundary into the next field, producing identical canonical bytes for distinct requests. (This was P23_CanonConcatInjective in earlier revisions of this file; Z3 exhibits a concrete two-field counterexample at every field length >= 2.)  FIX. The encoder now prepends each variable-length field with its byte length (a fixed-width unsigned length tag). A parser reads exactly the declared number of bytes for each field, so no byte inside any field can be mistaken for a boundary. P23 below proves injectivity of this encoder.  SCOPE OF THIS PROOF (bounded model checking). Cryptol + Z3 bit-blasts a fixed-size formula and hands it to SAT; there is no loop induction. The proof is over two fields of up to FL = 16 bytes each. It covers every concrete configuration at that size; the structural argument (a fixed-width length tag uniquely determines field boundaries) extends to arbitrary n and is what the production C++ / Rust encoders implement with a 64-bit big-endian length tag. A native-induction prover (Dafny / F* / Lean / Coq) or a SAW Hoare-logic proof over the loop in canonicalizePayload would extend the bound to all n. ////////////////////////////////////////////////////////////////////////////// Field length in bytes (parameter for the bounded model).
+
+**IW** — `8` — Index/length width: one byte is more than enough for FL <= 127.
+
+**FLs** — `2 // field length bound, bytes` — ////////////////////////////////////////////////////////////////////////////// 6.d Tier-2 gaps and what blocks them.  The following three properties are real and would meaningfully strengthen the spec, but each is blocked by a distinct obstacle:    (Gap 4)  AUTH-HEADER EXCLUSION            canonicalizePayload must be independent of the            x-fleet-authorization header value.            BLOCKED BY: the `Request = [256]` abstraction. The whole point            of collapsing the canonical bytes into one opaque Cryptol            value was to keep P8/P9 cheap; that collapse erases the            internal structure (headers, etc.) needed to *state* this            property.  STATEMENT (after refactor):              property P_AuthExcluded r v1 v2 =                canonicalize (r withAuth v1) == canonicalize (r withAuth v2)            COST: replace abstract Request with a structured record type            { method, path, headers : [N](Name, Value), body, timestamp }            and rebuild isValidSignature on top of it. One refactor also            unblocks Gap 6.    (Gap 6)  TIMESTAMP BINDING — FIXED.            The timestamp validated by isValidRequestDate is now bound            into the signed canonical bytes: `DeviceRequest::timestamp`            is appended to canonicalizePayload, and `handle_activate`            passes `request.timestamp` (NOT a caller parameter) to            `isValidRequestDate`. Mechanised as P29_TimestampBound            against the structured `RequestS` model; the historical            `requestTimestampUnix` caller parameter has been removed.    (Gap 5)  CONSTANT-TIME COMPARISON            constant_time_equals must execute the same sequence of basic            blocks regardless of which byte position first differs.            BLOCKED BY: Cryptol's semantic universe. Cryptol is a pure            functional spec language — it describes *values*, not            *executions*. The constant-time and variable-time            implementations of byte-equality are *the same Cryptol            function* (`\a b -> a == b`), so no Cryptol property can tell            them apart. This obligation belongs at the SAW / LLVM level:            symbolic execution of `crypto::constant_time_equals` for            inputs that differ only in *where* they first diverge must            produce the same control-flow trace. SAW can express this via            `crucible_path_condition`-style assertions; it just isn't            wired up here yet. ////////////////////////////////////////////////////////////////////////////// ////////////////////////////////////////////////////////////////////////////// 7. Compositional refinement — structured Request model  The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but blocks any property that needs to look INSIDE the request. We add a STRUCTURED layer alongside the abstract one. Existing properties P1–P27 keep reasoning about `Request = [256]`; new properties P28+ reason about `RequestS`. The two layers are linked by viewing the abstract `Request` as some hash of `canonicalizeS r`; that bridge is documentary — no property below depends on it, so the refinement is purely additive.  Bounded sizes for BMC: 2-byte fields, 2 headers per request. This is small enough to keep Z3 fast (~1s/property) and large enough to exhibit every structural counterexample shape we care about. //////////////////////////////////////////////////////////////////////////////
+
+**Ns** — `2 // bounded header count`
+
+### Field
+A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
+
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `len` | [ [IW](#iw) ] | |
+| `buf` | [ [FLs](#fls) ] [ 8 ] | |
+
+### Header
+One header is a (name, value) pair plus a flag marking it as the auth header (x-fleet-authorization) so the canonicalizer can exclude it.
+
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | [Field](#field) | |
+| `value` | [Field](#field) | |
+| `isAuth` | Bit | |
+
+### RequestS
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | [Field](#field) | |
+| `path` | [Field](#field) | |
+| `body` | [Field](#field) | |
+| `timestamp` | [Timestamp](#timestamp) | |
+| `hdrs` | [ [Ns](#ns) ] [Header](#header) | |
+
+## Functions
+
+### `none`
+
+**Signature:** ``
+
+(False, zero)
+
+#### Related Properties
+- [P3 — Key Id Hidden Until Active](#p3--key-id-hidden-until-active)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+none = (False, zero)
+```
+
+</details>
+
+### `some`
+
+**Signature:** `[UUID](#uuid) -> [OptUUID](#optuuid)`
+
+(True, u)
+
+#### Related Properties
+- [P4 — Key Id Revealed When Active](#p4--key-id-revealed-when-active)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+some u = (True, u)
+```
+
+</details>
+
+### `provisionKey`
+
+**Signature:** `fleetEnabled validRequest vaultResult keyIsActive`
+
+//////////////////////////////////////////////////////////////////////////////
+4. Decision logic
+//////////////////////////////////////////////////////////////////////////////
+4.1 [provisionKey](#provisionkey)
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | ~ fleetEnabled | [PR_Disabled](#provisionresult) |
+| 2 | ~ validRequest | [PR_BadRequest](#provisionresult) |
+| 3 | vaultResult != [KV_Ok](#keyvaultresult) | [PR_InternalError](#provisionresult) |
+| 4 | keyIsActive | [PR_Unauthorized](#provisionresult) |
+| 5 | *(otherwise)* | [PR_Succeeded](#provisionresult) |
+
+#### Related Properties
+- [P2 — Active Prevents Provisioning](#p2--active-prevents-provisioning)
+- [P5 — Disabled Rejects All](#p5--disabled-rejects-all)
+- [P15 — Can Provision When Ready](#p15--can-provision-when-ready)
+- [P20 — Bad Request Distinct](#p20--bad-request-distinct)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+provisionKey fleetEnabled validRequest vaultResult keyIsActive =
+  if ~ fleetEnabled        then PR_Disabled
+   | ~ validRequest        then PR_BadRequest
+   | vaultResult != KV_Ok  then PR_InternalError
+   | keyIsActive           then PR_Unauthorized
+  else                          PR_Succeeded
+```
+
+</details>
+
+### `enrollDevice`
+
+**Signature:** `fleetEnabled validMetadata authResult activationResult`
+
+4.2 [enrollDevice](#enrolldevice) (activate)
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | ~ fleetEnabled | [ER_Disabled](#enrollmentresult) |
+| 2 | ~ validMetadata | [ER_Unauthorized](#enrollmentresult) |
+| 3 | authResult == [AR_Authenticated](#authresult) |  |
+| 4 | activationResult == [AC_Success](#activationresult) | [ER_Succeeded](#enrollmentresult) |
+| 5 | activationResult == [AC_AlreadyActive](#activationresult) | [ER_Unauthorized](#enrollmentresult) |
+| 6 | *(otherwise)* | [ER_InternalError](#enrollmentresult)) |
+| 7 | authResult == [AR_VaultUnavailable](#authresult) | [ER_InternalError](#enrollmentresult) |
+| 8 | *(otherwise)* | [ER_Unauthorized](#enrollmentresult) |
+
+#### Related Properties
+- [P1 — Key Monotonicity](#p1--key-monotonicity)
+- [P5 — Disabled Rejects All](#p5--disabled-rejects-all)
+- [P10 — Missing Metadata Fails](#p10--missing-metadata-fails)
+- [P16 — Authenticated Activation Succeeds](#p16--authenticated-activation-succeeds)
+- [P19 — Vault Unavailable Is Internal](#p19--vault-unavailable-is-internal)
+- [P21 — Activate Without Metadata Unauthorized](#p21--activate-without-metadata-unauthorized)
+- [P22 — Activation Io Failure Is Internal](#p22--activation-io-failure-is-internal)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+enrollDevice fleetEnabled validMetadata authResult activationResult =
+  if ~ fleetEnabled                       then ER_Disabled
+   | ~ validMetadata                      then ER_Unauthorized
+   | authResult == AR_Authenticated       then
+        (if activationResult == AC_Success       then ER_Succeeded
+          | activationResult == AC_AlreadyActive then ER_Unauthorized
+         else                                         ER_InternalError)
+   | authResult == AR_VaultUnavailable    then ER_InternalError
+  else                                         ER_Unauthorized
+```
+
+</details>
+
+### `authenticate`
+
+**Signature:** `Bit -> Bit -> Bit -> Bit`
+
+4.3 [authenticate](#authenticate)
+
+dateValid && signatureValid && claimsValid
+
+#### Related Properties
+- [P6 — Auth Requires Valid Date](#p6--auth-requires-valid-date)
+- [P7 — Auth Requires Valid Signature](#p7--auth-requires-valid-signature)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+authenticate dateValid signatureValid claimsValid =
+  dateValid && signatureValid && claimsValid
+```
+
+</details>
+
+### `isValidRequestDate`
+
+**Signature:** `[Timestamp](#timestamp) -> [Timestamp](#timestamp) -> [Window](#window) -> Bit`
+
+(requestTs <= currentTime)
+  && ((currentTime - requestTs) <= windowSeconds)
+
+#### Related Properties
+- [P17 — Timestamp At Boundary Valid](#p17--timestamp-at-boundary-valid)
+- [P18 — Timestamp Beyond Boundary Invalid](#p18--timestamp-beyond-boundary-invalid)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+isValidRequestDate requestTs currentTime windowSeconds =
+  (requestTs <= currentTime)
+  && ((currentTime - requestTs) <= windowSeconds)
+```
+
+</details>
+
+### `hmacSha256`
+
+**Signature:** `[HmacKey](#hmackey) -> [Request](#request) -> [HmacTag](#hmactag)`
+
+Uninterpreted in proofs (SAW can treat this as a Cryptol primitive).
+
+k ^ r ^ (r <<< 1)   // placeholder; specs only use equality
+
+#### Related Properties
+- [P8 — Correct Signature Verifies](#p8--correct-signature-verifies)
+- [P9 — Wrong Signature Fails](#p9--wrong-signature-fails)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+hmacSha256 k r = k ^ r ^ (r <<< 1)   // placeholder; specs only use equality
+```
+
+</details>
+
+### `isValidSignature`
+
+**Signature:** `[HmacKey](#hmackey) -> [Request](#request) -> [HmacTag](#hmactag) -> Bit`
+
+[hmacSha256](#hmacsha256) key req == providedSig
+
+#### Related Properties
+- [P8 — Correct Signature Verifies](#p8--correct-signature-verifies)
+- [P9 — Wrong Signature Fails](#p9--wrong-signature-fails)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+isValidSignature key req providedSig =
+  hmacSha256 key req == providedSig
+```
+
+</details>
+
+### `enforceAccess`
+
+**Signature:** `[AccessMode](#accessmode) -> [AccessDecision](#accessdecision) -> ( Bit , Bit )`
+
+4.5 [enforceAccess](#enforceaccess)
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | mode == [AM_Off](#accessmode) | (True, False) |
+| 2 | mode == [AM_Audit](#accessmode) |  |
+| 3 | decision == [AD_Deny](#accessdecision) | (True, True) else (True, False) |
+| 4 | mode == [AM_Enforce](#accessmode) |  |
+| 5 | decision == [AD_Allow](#accessdecision) | (True,  False |
+| 6 | decision == [AD_Deny](#accessdecision) | (False, True) |
+| 7 | *(otherwise)* | (True,  False)) |
+| 8 | *(otherwise)* | (True, False)   // unreachable for well-formed modes |
+
+#### Related Properties
+- [P11 — Off Mode Allows All](#p11--off-mode-allows-all)
+- [P12 — Audit Never Denies](#p12--audit-never-denies)
+- [P13 — Enforce Blocks Denied](#p13--enforce-blocks-denied)
+- [P14 — Enforce Allows Permitted](#p14--enforce-allows-permitted)
+- [P26 — Enforce No Rule Allows Silently](#p26--enforce-no-rule-allows-silently)
+- [P27 — Audit Logged Only On Deny](#p27--audit-logged-only-on-deny)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+enforceAccess mode decision =
+  if mode == AM_Off then (True, False)
+   | mode == AM_Audit then
+        (if decision == AD_Deny then (True, True) else (True, False))
+   | mode == AM_Enforce then
+        (if decision == AD_Allow  then (True,  False)
+          | decision == AD_Deny   then (False, True)
+         else                          (True,  False))
+  else (True, False)   // unreachable for well-formed modes
+```
+
+</details>
+
+### `getStatus`
+
+**Signature:** `Bit -> Bit -> Bit -> [UUID](#uuid) -> [EnrollmentStatus](#enrollmentstatus)`
+
+4.6 [getStatus](#getstatus)
+
+{ fleetMode = if fleetEnabled then [FM_Enabled](#fleetmode) else [FM_Disabled](#fleetmode)
+  , hasKey    = hasKey
+  , keyId     = if keyIsActive then [some](#some) keyId else [none](#none)
+  , isActive  = keyIsActive
+  }
+
+#### Related Properties
+- [P3 — Key Id Hidden Until Active](#p3--key-id-hidden-until-active)
+- [P4 — Key Id Revealed When Active](#p4--key-id-revealed-when-active)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+getStatus fleetEnabled hasKey keyIsActive keyId =
+  { fleetMode = if fleetEnabled then FM_Enabled else FM_Disabled
+  , hasKey    = hasKey
+  , keyId     = if keyIsActive then some keyId else none
+  , isActive  = keyIsActive
+  }
+```
+
+</details>
+
+### `canonNormalized`
+
+**Signature:** `[ [IW](#iw) ] -> [ [FL](#fl) ] [ 8 ] -> Bit`
+
+A field is normalized iff bytes at indices >= n are zero. This is the
+invariant the C++ / Rust code maintains implicitly (it only reads the
+first n bytes); making it explicit keeps logically-distinct requests
+distinct as Cryptol values, so any collision the solver finds is a *real*
+one.
+
+and [ (i >= n) ==> ((b @ i) == 0)
+        | i <- ([0 .. [FL](#fl) - 1] : [[FL](#fl)][[IW](#iw)]) ]
+
+#### Related Properties
+- [P23 — Canonicalization Injective](#p23--canonicalization-injective)
+- [P24 — Header Canon Injective](#p24--header-canon-injective)
+- [P25 — Query Canon Injective](#p25--query-canon-injective)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+canonNormalized n b =
+    and [ (i >= n) ==> ((b @ i) == 0)
+        | i <- ([0 .. FL - 1] : [FL][IW]) ]
+```
+
+</details>
+
+### `canonLenPrefixed`
+
+**Signature:** `[ [IW](#iw) ] -> [ [FL](#fl) ] [ 8 ] -> [ [IW](#iw) ] -> [ [FL](#fl) ] [ 8 ] -> [ 2 * [FL](#fl) + 2 ] [ 8 ]`
+
+Length-prefixed canonicalization. Each variable-length field is preceded
+by its length tag: a parser reads the tag, then exactly that many bytes,
+then the next tag, then exactly that many bytes. No byte inside any field
+can be misread as a boundary, so the encoding is structurally injective.
+
+The Cryptol bound uses an 8-bit length tag (sufficient for [FL](#fl) <= 255);
+production uses a 64-bit big-endian tag (sufficient for any std::size_t /
+usize field). The injectivity argument is identical for both widths.
+
+[nm] # m # [nb] # b
+
+#### Related Properties
+- [P23 — Canonicalization Injective](#p23--canonicalization-injective)
+- [P24 — Header Canon Injective](#p24--header-canon-injective)
+- [P25 — Query Canon Injective](#p25--query-canon-injective)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+canonLenPrefixed nm m nb b = [nm] # m # [nb] # b
+```
+
+</details>
+
+### `fieldNormalized`
+
+**Signature:** `[Field](#field) -> Bit`
+
+(f.len <= (`[FLs](#fls) : [[IW](#iw)])) /\
+  and [ (i >= f.len) ==> ((f.buf @ i) == 0)
+      | i <- ([0 .. [FLs](#fls) - 1] : [[FLs](#fls)][[IW](#iw)]) ]
+
+#### Related Properties
+- [P28 — Auth Header Excluded](#p28--auth-header-excluded)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+fieldNormalized f =
+  (f.len <= (`FLs : [IW])) /\
+  and [ (i >= f.len) ==> ((f.buf @ i) == 0)
+      | i <- ([0 .. FLs - 1] : [FLs][IW]) ]
+```
+
+</details>
+
+### `requestNormalized`
+
+**Signature:** `[RequestS](#requests) -> Bit`
+
+[fieldNormalized](#fieldnormalized) r.method /\
+  [fieldNormalized](#fieldnormalized) r.path /\
+  [fieldNormalized](#fieldnormalized) r.body /\
+  and [ [fieldNormalized](#fieldnormalized) h.name /\ [fieldNormalized](#fieldnormalized) h.value
+      | h <- r.hdrs ]
+
+#### Related Properties
+- [P28 — Auth Header Excluded](#p28--auth-header-excluded)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+requestNormalized r =
+  fieldNormalized r.method /\
+  fieldNormalized r.path /\
+  fieldNormalized r.body /\
+  and [ fieldNormalized h.name /\ fieldNormalized h.value
+      | h <- r.hdrs ]
+```
+
+</details>
+
+### `lpField`
+
+**Signature:** `[Field](#field) -> [ 1 + [FLs](#fls) ] [ 8 ]`
+
+Length-prefix a [Field](#field) as [len-byte] # buf.
+
+[f.len] # f.buf
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+lpField f = [f.len] # f.buf
+```
+
+</details>
+
+### `lpHeader`
+
+**Signature:** `[Header](#header) -> [ 2 * ( 1 + [FLs](#fls) ) ] [ 8 ]`
+
+Length-prefix a header pair OR emit a constant-size all-zero placeholder
+if it is the auth header. Fixed output size keeps [canonicalizeS](#canonicalizes) Cryptol-
+statable; the placeholder content is irrelevant because the encoder
+elides auth headers regardless of their value.
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | h.isAuth | zero |
+| 2 | *(otherwise)* | ([lpField](#lpfield) h.name) # ([lpField](#lpfield) h.value) |
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+lpHeader h = if h.isAuth then zero
+                         else (lpField h.name) # (lpField h.value)
+```
+
+</details>
+
+### `canonicalizeS`
+
+**Signature:** `[RequestS](#requests) -> [ 3 * ( 1 + [FLs](#fls) ) + [Ns](#ns) * 2 * ( 1 + [FLs](#fls) ) + 8 ] [ 8 ]`
+
+Concrete canonicalize: length-prefixed method, body, headers (with
+auth-header exclusion), path, then the 8-byte big-endian timestamp.
+Mirrors the production C++/Rust encoder shape.
+
+[lpField](#lpfield) r.method
+  # [lpField](#lpfield) r.body
+  # join [ [lpHeader](#lpheader) h | h <- r.hdrs ]
+  # [lpField](#lpfield) r.path
+  # (split r.timestamp : [8][8])
+
+#### Related Properties
+- [P28 — Auth Header Excluded](#p28--auth-header-excluded)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+canonicalizeS r =
+    lpField r.method
+  # lpField r.body
+  # join [ lpHeader h | h <- r.hdrs ]
+  # lpField r.path
+  # (split r.timestamp : [8][8])
+```
+
+</details>
+
+### `verifierTimestamp_current`
+
+**Signature:** `[RequestS](#requests) -> [Timestamp](#timestamp) -> [Timestamp](#timestamp)`
+
+
+The timestamp the verifier validates must equal the timestamp inside the
+signed request — otherwise an attacker can replay a stale signed request
+with a fresh "current time" supplied by the caller and pass the freshness
+check despite the signature being over old bytes.
+
+The implementation now binds the timestamp into the request: it is a
+field of `DeviceRequest`, is included in the canonical signed bytes by
+`canonicalizePayload`, and is the only value `handle_activate` passes
+to `[isValidRequestDate](#isvalidrequestdate)`. The Cryptol model below mirrors that: the
+verifier extracts `r.timestamp` and the caller-supplied parameter (if
+any) is unused — a pure transport-layer artefact.
+
+r.timestamp
+
+#### Related Properties
+- [P29 — Timestamp Bound](#p29--timestamp-bound)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+verifierTimestamp_current r _ = r.timestamp
+```
+
+</details>
+
+## Key Lifecycle Safety
+
+### P1 — Key Monotonicity
+
+[P1](#p1--key-monotonicity): Key Monotonicity. Once a key is active, any subsequent activation
+attempt returns AlreadyActive. We model "the activation outcome when the
+key is already active" as a function of the activation oracle; the spec
+states this as an invariant on activationResult, which we express as:
+for any inputs, if the system reports the key is active then [enrollDevice](#enrolldevice)
+can never return Succeeded.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAuthResult authResult ==>
+keyAlreadyActive ==>
+enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
+!= ER_Succeeded
+```
+
+</details>
+
+### P2 — Active Prevents Provisioning
+
+[P2](#p2--active-prevents-provisioning): Active prevents provisioning.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isKeyVaultResult vaultResult ==>
+fleetEnabled ==>
+validRequest ==>
+vaultResult == KV_Ok ==>
+provisionKey fleetEnabled validRequest vaultResult True
+== PR_Unauthorized
+```
+
+</details>
+
+### P3 — Key Id Hidden Until Active
+
+[P3](#p3--key-id-hidden-until-active): Key ID hidden until active.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(getStatus fleetEnabled hasKey False keyId).keyId == none
+```
+
+</details>
+
+### P4 — Key Id Revealed When Active
+
+[P4](#p4--key-id-revealed-when-active): Key ID revealed when active.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(getStatus fleetEnabled hasKey True keyId).keyId == some keyId
+```
+
+</details>
+
+### P5 — Disabled Rejects All
+
+[P5](#p5--disabled-rejects-all): Disabled rejects all.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+authResult activationResult keyIsActive =
+isKeyVaultResult vaultResult ==>
+isAuthResult authResult ==>
+isActivationResult activationResult ==>
+(provisionKey False validRequest vaultResult keyIsActive == PR_Disabled)
+&& (enrollDevice False validMetadata authResult activationResult
+== ER_Disabled)
+```
+
+</details>
+
+## Authentication Security
+
+### P6 — Auth Requires Valid Date
+
+[P6](#p6--auth-requires-valid-date): Auth requires valid date.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+authenticate False sigValid claimsValid == False
+```
+
+</details>
+
+### P7 — Auth Requires Valid Signature
+
+[P7](#p7--auth-requires-valid-signature): Auth requires valid signature.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+authenticate dateValid False claimsValid == False
+```
+
+</details>
+
+### P8 — Correct Signature Verifies
+
+[P8](#p8--correct-signature-verifies): Correct signature verifies.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isValidSignature k r (hmacSha256 k r) == True
+```
+
+</details>
+
+### P9 — Wrong Signature Fails
+
+[P9](#p9--wrong-signature-fails): Wrong signature fails.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(sig != hmacSha256 k r) ==> (isValidSignature k r sig == False)
+```
+
+</details>
+
+### P10 — Missing Metadata Fails
+
+[P10](#p10--missing-metadata-fails): Missing metadata fails (when the fleet is enabled).
+Note: when the fleet is disabled, [enrollDevice](#enrolldevice) short-circuits to
+[ER_Disabled](#enrollmentresult) before the metadata check, so we restrict this property
+to the fleetEnabled case. The disabled case is covered by [P5](#p5--disabled-rejects-all).
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+fleetEnabled ==>
+isAuthResult authResult ==>
+isActivationResult activationResult ==>
+enrollDevice fleetEnabled False authResult activationResult
+== ER_Unauthorized
+```
+
+</details>
+
+## Access Control
+
+### P11 — Off Mode Allows All
+
+[P11](#p11--off-mode-allows-all): Off mode allows all (and logs nothing).
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAccessDecision decision ==>
+enforceAccess AM_Off decision == (True, False)
+```
+
+</details>
+
+### P12 — Audit Never Denies
+
+[P12](#p12--audit-never-denies): Audit mode never denies.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAccessDecision decision ==>
+(enforceAccess AM_Audit decision).0 == True
+```
+
+</details>
+
+### P13 — Enforce Blocks Denied
+
+[P13](#p13--enforce-blocks-denied): Enforce blocks denied.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+enforceAccess AM_Enforce AD_Deny == (False, True)
+```
+
+</details>
+
+### P14 — Enforce Allows Permitted
+
+[P14](#p14--enforce-allows-permitted): Enforce allows permitted.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+enforceAccess AM_Enforce AD_Allow == (True, False)
+```
+
+</details>
+
+## Protocol Liveness
+
+### P15 — Can Provision When Ready
+
+[P15](#p15--can-provision-when-ready): Can provision when ready.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+provisionKey True True KV_Ok False == PR_Succeeded
+```
+
+</details>
+
+### P16 — Authenticated Activation Succeeds
+
+[P16](#p16--authenticated-activation-succeeds): Authenticated activation succeeds.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+enrollDevice True True AR_Authenticated AC_Success == ER_Succeeded
+```
+
+</details>
+
+### P17 — Timestamp At Boundary Valid
+
+[P17](#p17--timestamp-at-boundary-valid): [Timestamp](#timestamp) at boundary is valid.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+// Avoid 64-bit overflow when constructing currentTime.
+(requestTs <= (~ zero) - window) ==>
+isValidRequestDate requestTs (requestTs + window) window == True
+```
+
+</details>
+
+### P18 — Timestamp Beyond Boundary Invalid
+
+[P18](#p18--timestamp-beyond-boundary-invalid): [Timestamp](#timestamp) beyond boundary is invalid.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(requestTs : Timestamp) (currentTime : Timestamp) (window : Window) =
+(requestTs <= currentTime) ==>
+((currentTime - requestTs) > window) ==>
+isValidRequestDate requestTs currentTime window == False
+```
+
+</details>
+
+## Error Handling
+
+### P19 — Vault Unavailable Is Internal
+
+[P19](#p19--vault-unavailable-is-internal): Vault unavailable is InternalError.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isActivationResult activationResult ==>
+enrollDevice True True AR_VaultUnavailable activationResult
+== ER_InternalError
+```
+
+</details>
+
+### P20 — Bad Request Distinct
+
+[P20](#p20--bad-request-distinct): BadRequest distinct from Unauthorized.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isKeyVaultResult vaultResult ==>
+provisionKey True False vaultResult keyIsActive == PR_BadRequest
+```
+
+</details>
+
+### P21 — Activate Without Metadata Unauthorized
+
+[P21](#p21--activate-without-metadata-unauthorized): Activate without metadata is Unauthorized.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAuthResult authResult ==>
+isActivationResult activationResult ==>
+enrollDevice True False authResult activationResult == ER_Unauthorized
+```
+
+</details>
+
+### P22 — Activation Io Failure Is Internal
+
+[P22](#p22--activation-io-failure-is-internal): Activation I/O failure is InternalError. An activation result that is
+neither Success nor AlreadyActive (i.e. an I/O failure) must yield
+InternalError when authentication succeeded.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isActivationResult activationResult ==>
+(activationResult != AC_Success) ==>
+(activationResult != AC_AlreadyActive) ==>
+enrollDevice True True AR_Authenticated activationResult
+== ER_InternalError
+```
+
+</details>
+
+### P23 — Canonicalization Injective
+
+[P23](#p23--canonicalization-injective): Length-prefixed canonicalization is byte-injective — distinct
+normalized requests produce distinct canonical byte streams.
+> **Note:** EXPECTED VERDICT: PASS. This is the safety property the production
+> canonicalizer satisfies after the delimiter -> length-prefix fix.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+nm1 m1 nb1 b1 nm2 m2 nb2 b2 =
+( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
+(nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
+canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
+canonNormalized nm2 m2 /\ canonNormalized nb2 b2 /\
+canonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )
+==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))
+```
+
+</details>
+
+### P24 — Header Canon Injective
+
+//////////////////////////////////////////////////////////////////////////////
+6.b Sub-canonicalizer injectivity — Tier-1 follow-up to [P23](#p23--canonicalization-injective).
+
+The [P23](#p23--canonicalization-injective) fix length-prefixes the FIVE TOP-LEVEL fields of the canonical
+payload (method | body | canonHeaders | path | canonQuery). The inner
+canonicalizers `canonicalize_headers` and `canonicalize_query` now use
+the SAME length-prefix scheme for every individual name and value they
+emit (an 8-byte big-endian length tag followed by the raw bytes), so
+they are structurally byte-injective in their input map by the same
+argument that proves [P23](#p23--canonicalization-injective): a parser reads <tag, name, tag, value> in
+fixed order with no byte inside any name or value capable of being
+misread as a record boundary.
+
+Historical note: an earlier revision joined records with '\n' (headers)
+or '&' (query) and fields inside each record with ':' / '='. That
+encoding admitted a header / query smuggling collision (a value
+containing "\nname:forged" parsed as an extra record under a forged
+header name). Concrete production-code collisions for that earlier
+encoding were exhibited in rust/tests/validate_canon_gaps.rs.
+//////////////////////////////////////////////////////////////////////////////
+[P24](#p24--header-canon-injective): `canonicalize_headers` is byte-injective in the header map.
+The production encoder length-prefixes every name and value with an
+8-byte big-endian tag (same shape as canonicalizePayload), so distinct
+normalized header records produce distinct canonical byte streams.
+> **Note:** EXPECTED VERDICT: PASS — the encoding closes the smuggling gap.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
+(nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
+canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
+canonNormalized nm2 m2 /\ canonNormalized nb2 b2 /\
+canonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )
+==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))
+```
+
+</details>
+
+### P25 — Query Canon Injective
+
+[P25](#p25--query-canon-injective): `canonicalize_query` is byte-injective in the query map.
+Same length-prefix shape; no separators are needed because the length
+tag uniquely marks each record boundary.
+> **Note:** EXPECTED VERDICT: PASS.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
+(nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
+canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
+canonNormalized nm2 m2 /\ canonNormalized nb2 b2 /\
+canonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )
+==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))
+```
+
+</details>
+
+### P26 — Enforce No Rule Allows Silently
+
+//////////////////////////////////////////////////////////////////////////////
+6.c [enforceAccess](#enforceaccess) matrix-coverage gap — Tier-3 follow-up.
+
+[P11](#p11--off-mode-allows-all)..[P14](#p14--enforce-allows-permitted) cover only 5 of the 9 cells of the ([AccessMode](#accessmode) × [AccessDecision](#accessdecision))
+matrix, and [P12](#p12--audit-never-denies) only checks the `.0 = allowed` projection (not the
+`.1 = logged` flag). The two properties below close the matrix.
+> **Note:** EXPECTED VERDICT: PASS — they document previously-unverified behaviour
+> of the existing model.
+> //////////////////////////////////////////////////////////////////////////////
+> [P26](#p26--enforce-no-rule-allows-silently): Enforce mode with no matching rule allows silently (matches the
+> spec's implicit fall-through and the C++/Rust impl's `else` branch).
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+enforceAccess AM_Enforce AD_NoRule == (True, False)
+```
+
+</details>
+
+### P27 — Audit Logged Only On Deny
+
+[P27](#p27--audit-logged-only-on-deny): Audit mode logs IFF the underlying decision is Deny — never on
+Allow or NoRule. Closes the .1 = logged projection that [P12](#p12--audit-never-denies) leaves
+unspecified.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAccessDecision decision ==>
+(enforceAccess AM_Audit decision).1 == (decision == AD_Deny)
+```
+
+</details>
+
+## Auth-header exclusion
+
+### P28 — Auth Header Excluded
+
+
+Two requests that differ ONLY in the bytes of their auth header value
+must produce the same canonical bytes — otherwise the signature would
+depend on itself.
+
+> **Note:** EXPECTED VERDICT: PASS. The encoder's `isAuth` skip enforces this; if a
+> future refactor removes the skip, this property breaks immediately.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+( requestNormalized r /\ fieldNormalized v1 /\ fieldNormalized v2 ) ==>
+canonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v1 } else h
+| h <- r.hdrs ] }
+==
+canonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v2 } else h
+| h <- r.hdrs ] }
+```
+
+</details>
+
+## Timestamp binding
+
+### P29 — Timestamp Bound
+
+> **Note:** EXPECTED VERDICT: PASS — the verifier uses the request-bound timestamp,
+> so a replayed signed request cannot be paired with a fresh "current
+> time" parameter to forge freshness.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+verifierTimestamp_current r tsFromCaller == r.timestamp
+```
+
+</details>

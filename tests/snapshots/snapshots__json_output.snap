@@ -1,0 +1,1425 @@
+---
+source: tests/snapshots.rs
+expression: json
+---
+[
+  {
+    "Module": {
+      "name": "SDEP",
+      "doc": [
+        "Secure Device Enrollment Protocol (SDEP) — Cryptol specification\r",
+        "\r",
+        "This module specifies the pure decision logic of SDEP and encodes the\r",
+        "22 security properties (P1–P22) from spec.md as Cryptol `property`\r",
+        "declarations suitable for proof with SAW/Z3.\r"
+      ]
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "FleetMode",
+      "width": "1",
+      "variants": [
+        {
+          "name": "FM_Disabled",
+          "value": "0"
+        },
+        {
+          "name": "FM_Enabled",
+          "value": "1"
+        }
+      ],
+      "predicate": "isFleetMode",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "2. Data types\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "2.1 Enumerations are encoded as small bit-vectors. Only the listed\r",
+        "constructor values are considered \"well-formed\"; properties that range\r",
+        "over an enum constrain the input with an `is<Enum>` predicate.\r"
+      ]
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "KeyVaultResult",
+      "width": "2",
+      "variants": [
+        {
+          "name": "KV_Ok",
+          "value": "0"
+        },
+        {
+          "name": "KV_NotFound",
+          "value": "1"
+        },
+        {
+          "name": "KV_IoError",
+          "value": "2"
+        }
+      ],
+      "predicate": "isKeyVaultResult",
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "AuthResult",
+      "width": "2",
+      "variants": [
+        {
+          "name": "AR_Authenticated",
+          "value": "0"
+        },
+        {
+          "name": "AR_Unauthenticated",
+          "value": "1"
+        },
+        {
+          "name": "AR_VaultUnavailable",
+          "value": "2"
+        }
+      ],
+      "predicate": "isAuthResult",
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "ActivationResult",
+      "width": "2",
+      "variants": [
+        {
+          "name": "AC_Success",
+          "value": "0"
+        },
+        {
+          "name": "AC_AlreadyActive",
+          "value": "1"
+        }
+      ],
+      "predicate": "isActivationResult",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "AC_IoFailure",
+      "signature": "ActivationResult // \"anything else\" bucket\r",
+      "branches": [],
+      "body": "2",
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "ProvisionResult",
+      "width": "3",
+      "variants": [
+        {
+          "name": "PR_Succeeded",
+          "value": "0"
+        },
+        {
+          "name": "PR_Unauthorized",
+          "value": "1"
+        },
+        {
+          "name": "PR_BadRequest",
+          "value": "2"
+        },
+        {
+          "name": "PR_Disabled",
+          "value": "3"
+        },
+        {
+          "name": "PR_InternalError",
+          "value": "4"
+        }
+      ],
+      "predicate": null,
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "EnrollmentResult",
+      "width": "2",
+      "variants": [
+        {
+          "name": "ER_Succeeded",
+          "value": "0"
+        },
+        {
+          "name": "ER_Unauthorized",
+          "value": "1"
+        },
+        {
+          "name": "ER_Disabled",
+          "value": "2"
+        },
+        {
+          "name": "ER_InternalError",
+          "value": "3"
+        }
+      ],
+      "predicate": null,
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "AccessMode",
+      "width": "2",
+      "variants": [
+        {
+          "name": "AM_Off",
+          "value": "0"
+        },
+        {
+          "name": "AM_Audit",
+          "value": "1"
+        },
+        {
+          "name": "AM_Enforce",
+          "value": "2"
+        }
+      ],
+      "predicate": "isAccessMode",
+      "doc": []
+    }
+  },
+  {
+    "EnumGroup": {
+      "type_name": "AccessDecision",
+      "width": "2",
+      "variants": [
+        {
+          "name": "AD_Allow",
+          "value": "0"
+        },
+        {
+          "name": "AD_Deny",
+          "value": "1"
+        },
+        {
+          "name": "AD_NoRule",
+          "value": "2"
+        }
+      ],
+      "predicate": "isAccessDecision",
+      "doc": []
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "UUID",
+      "width": "128",
+      "doc": [
+        "2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "OptUUID",
+      "width": "( Bit , UUID )",
+      "doc": [
+        "Option<UUID> is encoded as a (present?, value) pair.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "none",
+      "signature": "",
+      "branches": [
+        {
+          "condition": null,
+          "result": "(False, zero)"
+        }
+      ],
+      "body": "none = (False, zero)",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "some",
+      "signature": "UUID -> OptUUID",
+      "branches": [
+        {
+          "condition": null,
+          "result": "(True, u)"
+        }
+      ],
+      "body": "some u = (True, u)",
+      "doc": []
+    }
+  },
+  {
+    "RecordType": {
+      "name": "EnrollmentStatus",
+      "fields": [
+        [
+          "fleetMode",
+          "FleetMode"
+        ],
+        [
+          "hasKey",
+          "Bit"
+        ],
+        [
+          "keyId",
+          "OptUUID"
+        ],
+        [
+          "isActive",
+          "Bit"
+        ]
+      ],
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "provisionKey",
+      "signature": "fleetEnabled validRequest vaultResult keyIsActive",
+      "branches": [
+        {
+          "condition": "~ fleetEnabled",
+          "result": "PR_Disabled"
+        },
+        {
+          "condition": "~ validRequest",
+          "result": "PR_BadRequest"
+        },
+        {
+          "condition": "vaultResult != KV_Ok",
+          "result": "PR_InternalError"
+        },
+        {
+          "condition": "keyIsActive",
+          "result": "PR_Unauthorized"
+        },
+        {
+          "condition": null,
+          "result": "PR_Succeeded"
+        }
+      ],
+      "body": "provisionKey fleetEnabled validRequest vaultResult keyIsActive =\n  if ~ fleetEnabled        then PR_Disabled\n   | ~ validRequest        then PR_BadRequest\n   | vaultResult != KV_Ok  then PR_InternalError\n   | keyIsActive           then PR_Unauthorized\n  else                          PR_Succeeded",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "4. Decision logic\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "4.1 provisionKey\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "enrollDevice",
+      "signature": "fleetEnabled validMetadata authResult activationResult",
+      "branches": [
+        {
+          "condition": "~ fleetEnabled",
+          "result": "ER_Disabled"
+        },
+        {
+          "condition": "~ validMetadata",
+          "result": "ER_Unauthorized"
+        },
+        {
+          "condition": "authResult == AR_Authenticated",
+          "result": ""
+        },
+        {
+          "condition": "activationResult == AC_Success",
+          "result": "ER_Succeeded"
+        },
+        {
+          "condition": "activationResult == AC_AlreadyActive",
+          "result": "ER_Unauthorized"
+        },
+        {
+          "condition": null,
+          "result": "ER_InternalError)"
+        },
+        {
+          "condition": "authResult == AR_VaultUnavailable",
+          "result": "ER_InternalError"
+        },
+        {
+          "condition": null,
+          "result": "ER_Unauthorized"
+        }
+      ],
+      "body": "enrollDevice fleetEnabled validMetadata authResult activationResult =\n  if ~ fleetEnabled                       then ER_Disabled\n   | ~ validMetadata                      then ER_Unauthorized\n   | authResult == AR_Authenticated       then\n        (if activationResult == AC_Success       then ER_Succeeded\n          | activationResult == AC_AlreadyActive then ER_Unauthorized\n         else                                         ER_InternalError)\n   | authResult == AR_VaultUnavailable    then ER_InternalError\n  else                                         ER_Unauthorized",
+      "doc": [
+        "4.2 enrollDevice (activate)\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "authenticate",
+      "signature": "Bit -> Bit -> Bit -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "dateValid && signatureValid && claimsValid"
+        }
+      ],
+      "body": "authenticate dateValid signatureValid claimsValid =\n  dateValid && signatureValid && claimsValid",
+      "doc": [
+        "4.3 authenticate\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "Timestamp",
+      "width": "64",
+      "doc": [
+        "4.3.1 isValidRequestDate\r",
+        "  true iff requestTimestamp <= currentTime\r",
+        "         && currentTime - requestTimestamp <= windowSeconds\r",
+        "Timestamps and windows are unbounded naturals in spec; we use 64-bit.\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "Window",
+      "width": "64",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "isValidRequestDate",
+      "signature": "Timestamp -> Timestamp -> Window -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "(requestTs <= currentTime)\n  && ((currentTime - requestTs) <= windowSeconds)"
+        }
+      ],
+      "body": "isValidRequestDate requestTs currentTime windowSeconds =\n  (requestTs <= currentTime)\n  && ((currentTime - requestTs) <= windowSeconds)",
+      "doc": []
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "HmacKey",
+      "width": "256",
+      "doc": [
+        "4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC.\r",
+        "The Cryptol-level model treats HMAC-SHA256 as an opaque function from\r",
+        "(key, payload) to a 256-bit tag, and constantTimeEquals as `==`. The\r",
+        "canonicalizePayload step is collapsed into the abstract request value\r",
+        "because canonicalization is itself a pure function of the request.\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "HmacTag",
+      "width": "256",
+      "doc": []
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "Request",
+      "width": "256",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "hmacSha256",
+      "signature": "HmacKey -> Request -> HmacTag",
+      "branches": [
+        {
+          "condition": null,
+          "result": "k ^ r ^ (r <<< 1)   // placeholder; specs only use equality"
+        }
+      ],
+      "body": "hmacSha256 k r = k ^ r ^ (r <<< 1)   // placeholder; specs only use equality",
+      "doc": [
+        "Uninterpreted in proofs (SAW can treat this as a Cryptol primitive).\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "isValidSignature",
+      "signature": "HmacKey -> Request -> HmacTag -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "hmacSha256 key req == providedSig"
+        }
+      ],
+      "body": "isValidSignature key req providedSig =\n  hmacSha256 key req == providedSig",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "enforceAccess",
+      "signature": "AccessMode -> AccessDecision -> ( Bit , Bit )",
+      "branches": [
+        {
+          "condition": "mode == AM_Off",
+          "result": "(True, False)"
+        },
+        {
+          "condition": "mode == AM_Audit",
+          "result": ""
+        },
+        {
+          "condition": "decision == AD_Deny",
+          "result": "(True, True) else (True, False)"
+        },
+        {
+          "condition": "mode == AM_Enforce",
+          "result": ""
+        },
+        {
+          "condition": "decision == AD_Allow",
+          "result": "(True,  False"
+        },
+        {
+          "condition": "decision == AD_Deny",
+          "result": "(False, True)"
+        },
+        {
+          "condition": null,
+          "result": "(True,  False))"
+        },
+        {
+          "condition": null,
+          "result": "(True, False)   // unreachable for well-formed modes"
+        }
+      ],
+      "body": "enforceAccess mode decision =\n  if mode == AM_Off then (True, False)\n   | mode == AM_Audit then\n        (if decision == AD_Deny then (True, True) else (True, False))\n   | mode == AM_Enforce then\n        (if decision == AD_Allow  then (True,  False)\n          | decision == AD_Deny   then (False, True)\n         else                          (True,  False))\n  else (True, False)   // unreachable for well-formed modes",
+      "doc": [
+        "4.5 enforceAccess\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "getStatus",
+      "signature": "Bit -> Bit -> Bit -> UUID -> EnrollmentStatus",
+      "branches": [
+        {
+          "condition": null,
+          "result": "{ fleetMode = if fleetEnabled then FM_Enabled else FM_Disabled\n  , hasKey    = hasKey\n  , keyId     = if keyIsActive then some keyId else none\n  , isActive  = keyIsActive\n  }"
+        }
+      ],
+      "body": "getStatus fleetEnabled hasKey keyIsActive keyId =\n  { fleetMode = if fleetEnabled then FM_Enabled else FM_Disabled\n  , hasKey    = hasKey\n  , keyId     = if keyIsActive then some keyId else none\n  , isActive  = keyIsActive\n  }",
+      "doc": [
+        "4.6 getStatus\r"
+      ]
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "Category A: Key Lifecycle Safety -------------------------------------",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "5. Security properties (P1–P22)\r",
+        "//////////////////////////////////////////////////////////////////////////////\r"
+      ]
+    }
+  },
+  {
+    "Property": {
+      "label": "P1",
+      "name": "KeyMonotonicity",
+      "params": [
+        "fleetEnabled",
+        "validMetadata",
+        "authResult",
+        "keyAlreadyActive"
+      ],
+      "body": "isAuthResult authResult ==>\nkeyAlreadyActive ==>\nenrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive\n!= ER_Succeeded",
+      "doc": [
+        "P1: Key Monotonicity. Once a key is active, any subsequent activation\r",
+        "attempt returns AlreadyActive. We model \"the activation outcome when the\r",
+        "key is already active\" as a function of the activation oracle; the spec\r",
+        "states this as an invariant on activationResult, which we express as:\r",
+        "for any inputs, if the system reports the key is active then enrollDevice\r",
+        "can never return Succeeded.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P2",
+      "name": "ActivePreventsProvisioning",
+      "params": [
+        "fleetEnabled",
+        "validRequest",
+        "vaultResult"
+      ],
+      "body": "isKeyVaultResult vaultResult ==>\nfleetEnabled ==>\nvalidRequest ==>\nvaultResult == KV_Ok ==>\nprovisionKey fleetEnabled validRequest vaultResult True\n== PR_Unauthorized",
+      "doc": [
+        "P2: Active prevents provisioning.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P3",
+      "name": "KeyIdHiddenUntilActive",
+      "params": [
+        "fleetEnabled",
+        "hasKey",
+        "keyId"
+      ],
+      "body": "(getStatus fleetEnabled hasKey False keyId).keyId == none",
+      "doc": [
+        "P3: Key ID hidden until active.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P4",
+      "name": "KeyIdRevealedWhenActive",
+      "params": [
+        "fleetEnabled",
+        "hasKey",
+        "keyId"
+      ],
+      "body": "(getStatus fleetEnabled hasKey True keyId).keyId == some keyId",
+      "doc": [
+        "P4: Key ID revealed when active.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P5",
+      "name": "DisabledRejectsAll",
+      "params": [
+        "validRequest",
+        "vaultResult",
+        "validMetadata"
+      ],
+      "body": "authResult activationResult keyIsActive =\nisKeyVaultResult vaultResult ==>\nisAuthResult authResult ==>\nisActivationResult activationResult ==>\n(provisionKey False validRequest vaultResult keyIsActive == PR_Disabled)\n&& (enrollDevice False validMetadata authResult activationResult\n== ER_Disabled)",
+      "doc": [
+        "P5: Disabled rejects all.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "Category B: Authentication Security ----------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Property": {
+      "label": "P6",
+      "name": "AuthRequiresValidDate",
+      "params": [
+        "sigValid",
+        "claimsValid"
+      ],
+      "body": "authenticate False sigValid claimsValid == False",
+      "doc": [
+        "P6: Auth requires valid date.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P7",
+      "name": "AuthRequiresValidSignature",
+      "params": [
+        "dateValid",
+        "claimsValid"
+      ],
+      "body": "authenticate dateValid False claimsValid == False",
+      "doc": [
+        "P7: Auth requires valid signature.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P8",
+      "name": "CorrectSignatureVerifies",
+      "params": [
+        "(k : HmacKey)",
+        "(r : Request)"
+      ],
+      "body": "isValidSignature k r (hmacSha256 k r) == True",
+      "doc": [
+        "P8: Correct signature verifies.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P9",
+      "name": "WrongSignatureFails",
+      "params": [
+        "(k : HmacKey)",
+        "(r : Request)",
+        "(sig : HmacTag)"
+      ],
+      "body": "(sig != hmacSha256 k r) ==> (isValidSignature k r sig == False)",
+      "doc": [
+        "P9: Wrong signature fails.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P10",
+      "name": "MissingMetadataFails",
+      "params": [
+        "fleetEnabled",
+        "authResult",
+        "activationResult"
+      ],
+      "body": "fleetEnabled ==>\nisAuthResult authResult ==>\nisActivationResult activationResult ==>\nenrollDevice fleetEnabled False authResult activationResult\n== ER_Unauthorized",
+      "doc": [
+        "P10: Missing metadata fails (when the fleet is enabled).\r",
+        "Note: when the fleet is disabled, enrollDevice short-circuits to\r",
+        "ER_Disabled before the metadata check, so we restrict this property\r",
+        "to the fleetEnabled case. The disabled case is covered by P5.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "Category C: Access Control -------------------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Property": {
+      "label": "P11",
+      "name": "OffModeAllowsAll",
+      "params": [
+        "decision"
+      ],
+      "body": "isAccessDecision decision ==>\nenforceAccess AM_Off decision == (True, False)",
+      "doc": [
+        "P11: Off mode allows all (and logs nothing).\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P12",
+      "name": "AuditNeverDenies",
+      "params": [
+        "decision"
+      ],
+      "body": "isAccessDecision decision ==>\n(enforceAccess AM_Audit decision).0 == True",
+      "doc": [
+        "P12: Audit mode never denies.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P13",
+      "name": "EnforceBlocksDenied",
+      "params": [],
+      "body": "enforceAccess AM_Enforce AD_Deny == (False, True)",
+      "doc": [
+        "P13: Enforce blocks denied.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P14",
+      "name": "EnforceAllowsPermitted",
+      "params": [],
+      "body": "enforceAccess AM_Enforce AD_Allow == (True, False)",
+      "doc": [
+        "P14: Enforce allows permitted.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "Category D: Protocol Liveness ----------------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Property": {
+      "label": "P15",
+      "name": "CanProvisionWhenReady",
+      "params": [],
+      "body": "provisionKey True True KV_Ok False == PR_Succeeded",
+      "doc": [
+        "P15: Can provision when ready.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P16",
+      "name": "AuthenticatedActivationSucceeds",
+      "params": [],
+      "body": "enrollDevice True True AR_Authenticated AC_Success == ER_Succeeded",
+      "doc": [
+        "P16: Authenticated activation succeeds.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P17",
+      "name": "TimestampAtBoundaryValid",
+      "params": [
+        "(requestTs : Timestamp)",
+        "(window : Window)"
+      ],
+      "body": "// Avoid 64-bit overflow when constructing currentTime.\n(requestTs <= (~ zero) - window) ==>\nisValidRequestDate requestTs (requestTs + window) window == True",
+      "doc": [
+        "P17: Timestamp at boundary is valid.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P18",
+      "name": "TimestampBeyondBoundaryInvalid",
+      "params": [],
+      "body": "(requestTs : Timestamp) (currentTime : Timestamp) (window : Window) =\n(requestTs <= currentTime) ==>\n((currentTime - requestTs) > window) ==>\nisValidRequestDate requestTs currentTime window == False",
+      "doc": [
+        "P18: Timestamp beyond boundary is invalid.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "Category E: Error Handling -------------------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Property": {
+      "label": "P19",
+      "name": "VaultUnavailableIsInternal",
+      "params": [
+        "activationResult"
+      ],
+      "body": "isActivationResult activationResult ==>\nenrollDevice True True AR_VaultUnavailable activationResult\n== ER_InternalError",
+      "doc": [
+        "P19: Vault unavailable is InternalError.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P20",
+      "name": "BadRequestDistinct",
+      "params": [
+        "vaultResult",
+        "keyIsActive"
+      ],
+      "body": "isKeyVaultResult vaultResult ==>\nprovisionKey True False vaultResult keyIsActive == PR_BadRequest",
+      "doc": [
+        "P20: BadRequest distinct from Unauthorized.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P21",
+      "name": "ActivateWithoutMetadataUnauthorized",
+      "params": [
+        "authResult",
+        "activationResult"
+      ],
+      "body": "isAuthResult authResult ==>\nisActivationResult activationResult ==>\nenrollDevice True False authResult activationResult == ER_Unauthorized",
+      "doc": [
+        "P21: Activate without metadata is Unauthorized.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P22",
+      "name": "ActivationIoFailureIsInternal",
+      "params": [
+        "activationResult"
+      ],
+      "body": "isActivationResult activationResult ==>\n(activationResult != AC_Success) ==>\n(activationResult != AC_AlreadyActive) ==>\nenrollDevice True True AR_Authenticated activationResult\n== ER_InternalError",
+      "doc": [
+        "P22: Activation I/O failure is InternalError. An activation result that is\r",
+        "neither Success nor AlreadyActive (i.e. an I/O failure) must yield\r",
+        "InternalError when authentication succeeded.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "FL",
+      "width": "16",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "6. Canonicalization byte-injectivity (string-processing layer)\r",
+        "\r",
+        "`canonicalizePayload` in cpp/src/canonical.cpp and rust/src/lib.rs produces\r",
+        "the byte string the HMAC is computed over. The protocol's security goal —\r",
+        "distinct requests yield distinct HMAC inputs — requires this canonical byte\r",
+        "stream to be *injective* in the request. A failure here is exactly the\r",
+        "shape of real-world signature-confusion vulnerabilities (AWS SigV4\r",
+        "ambiguity, HTTP request smuggling).\r",
+        "\r",
+        "HISTORY. The original SDEP encoder concatenated variable-length fields\r",
+        "with a single '\\n' delimiter:\r",
+        "\r",
+        "    method '\\n' body '\\n' canonHeaders '\\n' path '\\n' canonQuery\r",
+        "\r",
+        "That encoding is NOT injective: a newline smuggled into the body shifts\r",
+        "the parse boundary into the next field, producing identical canonical\r",
+        "bytes for distinct requests. (This was P23_CanonConcatInjective in earlier\r",
+        "revisions of this file; Z3 exhibits a concrete two-field counterexample\r",
+        "at every field length >= 2.)\r",
+        "\r",
+        "FIX. The encoder now prepends each variable-length field with its byte\r",
+        "length (a fixed-width unsigned length tag). A parser reads exactly the\r",
+        "declared number of bytes for each field, so no byte inside any field can\r",
+        "be mistaken for a boundary. P23 below proves injectivity of this encoder.\r",
+        "\r",
+        "SCOPE OF THIS PROOF (bounded model checking).\r",
+        "Cryptol + Z3 bit-blasts a fixed-size formula and hands it to SAT; there is\r",
+        "no loop induction. The proof is over two fields of up to FL = 16 bytes\r",
+        "each. It covers every concrete configuration at that size; the structural\r",
+        "argument (a fixed-width length tag uniquely determines field boundaries)\r",
+        "extends to arbitrary n and is what the production C++ / Rust encoders\r",
+        "implement with a 64-bit big-endian length tag. A native-induction prover\r",
+        "(Dafny / F* / Lean / Coq) or a SAW Hoare-logic proof over the loop in\r",
+        "canonicalizePayload would extend the bound to all n.\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "Field length in bytes (parameter for the bounded model).\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "IW",
+      "width": "8",
+      "doc": [
+        "Index/length width: one byte is more than enough for FL <= 127.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "canonNormalized",
+      "signature": "[ IW ] -> [ FL ] [ 8 ] -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "and [ (i >= n) ==> ((b @ i) == 0)\n        | i <- ([0 .. FL - 1] : [FL][IW]) ]"
+        }
+      ],
+      "body": "canonNormalized n b =\n    and [ (i >= n) ==> ((b @ i) == 0)\n        | i <- ([0 .. FL - 1] : [FL][IW]) ]",
+      "doc": [
+        "A field is normalized iff bytes at indices >= n are zero. This is the\r",
+        "invariant the C++ / Rust code maintains implicitly (it only reads the\r",
+        "first n bytes); making it explicit keeps logically-distinct requests\r",
+        "distinct as Cryptol values, so any collision the solver finds is a *real*\r",
+        "one.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "canonLenPrefixed",
+      "signature": "[ IW ] -> [ FL ] [ 8 ] -> [ IW ] -> [ FL ] [ 8 ] -> [ 2 * FL + 2 ] [ 8 ]",
+      "branches": [
+        {
+          "condition": null,
+          "result": "[nm] # m # [nb] # b"
+        }
+      ],
+      "body": "canonLenPrefixed nm m nb b = [nm] # m # [nb] # b",
+      "doc": [
+        "Length-prefixed canonicalization. Each variable-length field is preceded\r",
+        "by its length tag: a parser reads the tag, then exactly that many bytes,\r",
+        "then the next tag, then exactly that many bytes. No byte inside any field\r",
+        "can be misread as a boundary, so the encoding is structurally injective.\r",
+        "\r",
+        "The Cryptol bound uses an 8-bit length tag (sufficient for FL <= 255);\r",
+        "production uses a 64-bit big-endian tag (sufficient for any std::size_t /\r",
+        "usize field). The injectivity argument is identical for both widths.\r"
+      ]
+    }
+  },
+  {
+    "Property": {
+      "label": "P23",
+      "name": "CanonicalizationInjective",
+      "params": [],
+      "body": "nm1 m1 nb1 b1 nm2 m2 nb2 b2 =\n( (nm1 <= (`FL : [IW])) /\\ (nb1 <= (`FL : [IW])) /\\\n(nm2 <= (`FL : [IW])) /\\ (nb2 <= (`FL : [IW])) /\\\ncanonNormalized nm1 m1 /\\ canonNormalized nb1 b1 /\\\ncanonNormalized nm2 m2 /\\ canonNormalized nb2 b2 /\\\ncanonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )\n==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))",
+      "doc": [
+        "P23: Length-prefixed canonicalization is byte-injective — distinct\r",
+        "normalized requests produce distinct canonical byte streams.\r",
+        "EXPECTED VERDICT: PASS. This is the safety property the production\r",
+        "canonicalizer satisfies after the delimiter -> length-prefix fix.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P24",
+      "name": "HeaderCanonInjective",
+      "params": [
+        "nm1",
+        "m1",
+        "nb1",
+        "b1",
+        "nm2",
+        "m2",
+        "nb2",
+        "b2"
+      ],
+      "body": "( (nm1 <= (`FL : [IW])) /\\ (nb1 <= (`FL : [IW])) /\\\n(nm2 <= (`FL : [IW])) /\\ (nb2 <= (`FL : [IW])) /\\\ncanonNormalized nm1 m1 /\\ canonNormalized nb1 b1 /\\\ncanonNormalized nm2 m2 /\\ canonNormalized nb2 b2 /\\\ncanonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )\n==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "6.b Sub-canonicalizer injectivity — Tier-1 follow-up to P23.\r",
+        "\r",
+        "The P23 fix length-prefixes the FIVE TOP-LEVEL fields of the canonical\r",
+        "payload (method | body | canonHeaders | path | canonQuery). The inner\r",
+        "canonicalizers `canonicalize_headers` and `canonicalize_query` now use\r",
+        "the SAME length-prefix scheme for every individual name and value they\r",
+        "emit (an 8-byte big-endian length tag followed by the raw bytes), so\r",
+        "they are structurally byte-injective in their input map by the same\r",
+        "argument that proves P23: a parser reads <tag, name, tag, value> in\r",
+        "fixed order with no byte inside any name or value capable of being\r",
+        "misread as a record boundary.\r",
+        "\r",
+        "Historical note: an earlier revision joined records with '\\n' (headers)\r",
+        "or '&' (query) and fields inside each record with ':' / '='. That\r",
+        "encoding admitted a header / query smuggling collision (a value\r",
+        "containing \"\\nname:forged\" parsed as an extra record under a forged\r",
+        "header name). Concrete production-code collisions for that earlier\r",
+        "encoding were exhibited in rust/tests/validate_canon_gaps.rs.\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "P24: `canonicalize_headers` is byte-injective in the header map.\r",
+        "The production encoder length-prefixes every name and value with an\r",
+        "8-byte big-endian tag (same shape as canonicalizePayload), so distinct\r",
+        "normalized header records produce distinct canonical byte streams.\r",
+        "EXPECTED VERDICT: PASS — the encoding closes the smuggling gap.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P25",
+      "name": "QueryCanonInjective",
+      "params": [
+        "nm1",
+        "m1",
+        "nb1",
+        "b1",
+        "nm2",
+        "m2",
+        "nb2",
+        "b2"
+      ],
+      "body": "( (nm1 <= (`FL : [IW])) /\\ (nb1 <= (`FL : [IW])) /\\\n(nm2 <= (`FL : [IW])) /\\ (nb2 <= (`FL : [IW])) /\\\ncanonNormalized nm1 m1 /\\ canonNormalized nb1 b1 /\\\ncanonNormalized nm2 m2 /\\ canonNormalized nb2 b2 /\\\ncanonLenPrefixed nm1 m1 nb1 b1 == canonLenPrefixed nm2 m2 nb2 b2 )\n==> ((nm1, m1, nb1, b1) == (nm2, m2, nb2, b2))",
+      "doc": [
+        "P25: `canonicalize_query` is byte-injective in the query map.\r",
+        "Same length-prefix shape; no separators are needed because the length\r",
+        "tag uniquely marks each record boundary.\r",
+        "EXPECTED VERDICT: PASS.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P26",
+      "name": "EnforceNoRuleAllowsSilently",
+      "params": [],
+      "body": "enforceAccess AM_Enforce AD_NoRule == (True, False)",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "6.c enforceAccess matrix-coverage gap — Tier-3 follow-up.\r",
+        "\r",
+        "P11..P14 cover only 5 of the 9 cells of the (AccessMode × AccessDecision)\r",
+        "matrix, and P12 only checks the `.0 = allowed` projection (not the\r",
+        "`.1 = logged` flag). The two properties below close the matrix.\r",
+        "EXPECTED VERDICT: PASS — they document previously-unverified behaviour\r",
+        "of the existing model.\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "P26: Enforce mode with no matching rule allows silently (matches the\r",
+        "spec's implicit fall-through and the C++/Rust impl's `else` branch).\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Property": {
+      "label": "P27",
+      "name": "AuditLoggedOnlyOnDeny",
+      "params": [
+        "decision"
+      ],
+      "body": "isAccessDecision decision ==>\n(enforceAccess AM_Audit decision).1 == (decision == AD_Deny)",
+      "doc": [
+        "P27: Audit mode logs IFF the underlying decision is Deny — never on\r",
+        "Allow or NoRule. Closes the .1 = logged projection that P12 leaves\r",
+        "unspecified.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "FLs",
+      "width": "2 // field length bound, bytes\r",
+      "doc": [
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "6.d Tier-2 gaps and what blocks them.\r",
+        "\r",
+        "The following three properties are real and would meaningfully strengthen\r",
+        "the spec, but each is blocked by a distinct obstacle:\r",
+        "\r",
+        "  (Gap 4)  AUTH-HEADER EXCLUSION\r",
+        "           canonicalizePayload must be independent of the\r",
+        "           x-fleet-authorization header value.\r",
+        "           BLOCKED BY: the `Request = [256]` abstraction. The whole point\r",
+        "           of collapsing the canonical bytes into one opaque Cryptol\r",
+        "           value was to keep P8/P9 cheap; that collapse erases the\r",
+        "           internal structure (headers, etc.) needed to *state* this\r",
+        "           property.  STATEMENT (after refactor):\r",
+        "             property P_AuthExcluded r v1 v2 =\r",
+        "               canonicalize (r withAuth v1) == canonicalize (r withAuth v2)\r",
+        "           COST: replace abstract Request with a structured record type\r",
+        "           { method, path, headers : [N](Name, Value), body, timestamp }\r",
+        "           and rebuild isValidSignature on top of it. One refactor also\r",
+        "           unblocks Gap 6.\r",
+        "\r",
+        "  (Gap 6)  TIMESTAMP BINDING — FIXED.\r",
+        "           The timestamp validated by isValidRequestDate is now bound\r",
+        "           into the signed canonical bytes: `DeviceRequest::timestamp`\r",
+        "           is appended to canonicalizePayload, and `handle_activate`\r",
+        "           passes `request.timestamp` (NOT a caller parameter) to\r",
+        "           `isValidRequestDate`. Mechanised as P29_TimestampBound\r",
+        "           against the structured `RequestS` model; the historical\r",
+        "           `requestTimestampUnix` caller parameter has been removed.\r",
+        "\r",
+        "  (Gap 5)  CONSTANT-TIME COMPARISON\r",
+        "           constant_time_equals must execute the same sequence of basic\r",
+        "           blocks regardless of which byte position first differs.\r",
+        "           BLOCKED BY: Cryptol's semantic universe. Cryptol is a pure\r",
+        "           functional spec language — it describes *values*, not\r",
+        "           *executions*. The constant-time and variable-time\r",
+        "           implementations of byte-equality are *the same Cryptol\r",
+        "           function* (`\\a b -> a == b`), so no Cryptol property can tell\r",
+        "           them apart. This obligation belongs at the SAW / LLVM level:\r",
+        "           symbolic execution of `crypto::constant_time_equals` for\r",
+        "           inputs that differ only in *where* they first diverge must\r",
+        "           produce the same control-flow trace. SAW can express this via\r",
+        "           `crucible_path_condition`-style assertions; it just isn't\r",
+        "           wired up here yet.\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "//////////////////////////////////////////////////////////////////////////////\r",
+        "7. Compositional refinement — structured Request model\r",
+        "\r",
+        "The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but\r",
+        "blocks any property that needs to look INSIDE the request. We add a\r",
+        "STRUCTURED layer alongside the abstract one. Existing properties P1–P27\r",
+        "keep reasoning about `Request = [256]`; new properties P28+ reason about\r",
+        "`RequestS`. The two layers are linked by viewing the abstract `Request`\r",
+        "as some hash of `canonicalizeS r`; that bridge is documentary — no\r",
+        "property below depends on it, so the refinement is purely additive.\r",
+        "\r",
+        "Bounded sizes for BMC: 2-byte fields, 2 headers per request. This is\r",
+        "small enough to keep Z3 fast (~1s/property) and large enough to exhibit\r",
+        "every structural counterexample shape we care about.\r",
+        "//////////////////////////////////////////////////////////////////////////////\r"
+      ]
+    }
+  },
+  {
+    "TypeAlias": {
+      "name": "Ns",
+      "width": "2 // bounded header count\r",
+      "doc": []
+    }
+  },
+  {
+    "RecordType": {
+      "name": "Field",
+      "fields": [
+        [
+          "len",
+          "[ IW ]"
+        ],
+        [
+          "buf",
+          "[ FLs ] [ 8 ]"
+        ]
+      ],
+      "doc": [
+        "A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "fieldNormalized",
+      "signature": "Field -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "(f.len <= (`FLs : [IW])) /\\\n  and [ (i >= f.len) ==> ((f.buf @ i) == 0)\n      | i <- ([0 .. FLs - 1] : [FLs][IW]) ]"
+        }
+      ],
+      "body": "fieldNormalized f =\n  (f.len <= (`FLs : [IW])) /\\\n  and [ (i >= f.len) ==> ((f.buf @ i) == 0)\n      | i <- ([0 .. FLs - 1] : [FLs][IW]) ]",
+      "doc": []
+    }
+  },
+  {
+    "RecordType": {
+      "name": "Header",
+      "fields": [
+        [
+          "name",
+          "Field"
+        ],
+        [
+          "value",
+          "Field"
+        ],
+        [
+          "isAuth",
+          "Bit"
+        ]
+      ],
+      "doc": [
+        "One header is a (name, value) pair plus a flag marking it as the auth\r",
+        "header (x-fleet-authorization) so the canonicalizer can exclude it.\r"
+      ]
+    }
+  },
+  {
+    "RecordType": {
+      "name": "RequestS",
+      "fields": [
+        [
+          "method",
+          "Field"
+        ],
+        [
+          "path",
+          "Field"
+        ],
+        [
+          "body",
+          "Field"
+        ],
+        [
+          "timestamp",
+          "Timestamp"
+        ],
+        [
+          "hdrs",
+          "[ Ns ] Header"
+        ]
+      ],
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "requestNormalized",
+      "signature": "RequestS -> Bit",
+      "branches": [
+        {
+          "condition": null,
+          "result": "fieldNormalized r.method /\\\n  fieldNormalized r.path /\\\n  fieldNormalized r.body /\\\n  and [ fieldNormalized h.name /\\ fieldNormalized h.value\n      | h <- r.hdrs ]"
+        }
+      ],
+      "body": "requestNormalized r =\n  fieldNormalized r.method /\\\n  fieldNormalized r.path /\\\n  fieldNormalized r.body /\\\n  and [ fieldNormalized h.name /\\ fieldNormalized h.value\n      | h <- r.hdrs ]",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "lpField",
+      "signature": "Field -> [ 1 + FLs ] [ 8 ]",
+      "branches": [
+        {
+          "condition": null,
+          "result": "[f.len] # f.buf"
+        }
+      ],
+      "body": "lpField f = [f.len] # f.buf",
+      "doc": [
+        "Length-prefix a Field as [len-byte] # buf.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "lpHeader",
+      "signature": "Header -> [ 2 * ( 1 + FLs ) ] [ 8 ]",
+      "branches": [
+        {
+          "condition": "h.isAuth",
+          "result": "zero"
+        },
+        {
+          "condition": null,
+          "result": "(lpField h.name) # (lpField h.value)"
+        }
+      ],
+      "body": "lpHeader h = if h.isAuth then zero\n                         else (lpField h.name) # (lpField h.value)",
+      "doc": [
+        "Length-prefix a header pair OR emit a constant-size all-zero placeholder\r",
+        "if it is the auth header. Fixed output size keeps canonicalizeS Cryptol-\r",
+        "statable; the placeholder content is irrelevant because the encoder\r",
+        "elides auth headers regardless of their value.\r"
+      ]
+    }
+  },
+  {
+    "Function": {
+      "name": "canonicalizeS",
+      "signature": "RequestS -> [ 3 * ( 1 + FLs ) + Ns * 2 * ( 1 + FLs ) + 8 ] [ 8 ]",
+      "branches": [
+        {
+          "condition": null,
+          "result": "lpField r.method\n  # lpField r.body\n  # join [ lpHeader h | h <- r.hdrs ]\n  # lpField r.path\n  # (split r.timestamp : [8][8])"
+        }
+      ],
+      "body": "canonicalizeS r =\n    lpField r.method\n  # lpField r.body\n  # join [ lpHeader h | h <- r.hdrs ]\n  # lpField r.path\n  # (split r.timestamp : [8][8])",
+      "doc": [
+        "Concrete canonicalize: length-prefixed method, body, headers (with\r",
+        "auth-header exclusion), path, then the 8-byte big-endian timestamp.\r",
+        "Mirrors the production C++/Rust encoder shape.\r"
+      ]
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "P28: Auth-header exclusion --------------------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Property": {
+      "label": "P28",
+      "name": "AuthHeaderExcluded",
+      "params": [
+        "r",
+        "v1",
+        "v2"
+      ],
+      "body": "( requestNormalized r /\\ fieldNormalized v1 /\\ fieldNormalized v2 ) ==>\ncanonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v1 } else h\n| h <- r.hdrs ] }\n==\ncanonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v2 } else h\n| h <- r.hdrs ] }",
+      "doc": [
+        "\r",
+        "Two requests that differ ONLY in the bytes of their auth header value\r",
+        "must produce the same canonical bytes — otherwise the signature would\r",
+        "depend on itself.\r",
+        "\r",
+        "EXPECTED VERDICT: PASS. The encoder's `isAuth` skip enforces this; if a\r",
+        "future refactor removes the skip, this property breaks immediately.\r"
+      ],
+      "proof_status": null
+    }
+  },
+  {
+    "Section": {
+      "level": 3,
+      "title": "P29: Timestamp binding ------------------------------------------------",
+      "doc": []
+    }
+  },
+  {
+    "Function": {
+      "name": "verifierTimestamp_current",
+      "signature": "RequestS -> Timestamp -> Timestamp",
+      "branches": [
+        {
+          "condition": null,
+          "result": "r.timestamp"
+        }
+      ],
+      "body": "verifierTimestamp_current r _ = r.timestamp",
+      "doc": [
+        "\r",
+        "The timestamp the verifier validates must equal the timestamp inside the\r",
+        "signed request — otherwise an attacker can replay a stale signed request\r",
+        "with a fresh \"current time\" supplied by the caller and pass the freshness\r",
+        "check despite the signature being over old bytes.\r",
+        "\r",
+        "The implementation now binds the timestamp into the request: it is a\r",
+        "field of `DeviceRequest`, is included in the canonical signed bytes by\r",
+        "`canonicalizePayload`, and is the only value `handle_activate` passes\r",
+        "to `isValidRequestDate`. The Cryptol model below mirrors that: the\r",
+        "verifier extracts `r.timestamp` and the caller-supplied parameter (if\r",
+        "any) is unused — a pure transport-layer artefact.\r"
+      ]
+    }
+  },
+  {
+    "Property": {
+      "label": "P29",
+      "name": "TimestampBound",
+      "params": [
+        "r",
+        "tsFromCaller"
+      ],
+      "body": "verifierTimestamp_current r tsFromCaller == r.timestamp",
+      "doc": [
+        "EXPECTED VERDICT: PASS — the verifier uses the request-bound timestamp,\r",
+        "so a replayed signed request cannot be paired with a fresh \"current\r",
+        "time\" parameter to forge freshness.\r"
+      ],
+      "proof_status": null
+    }
+  }
+]

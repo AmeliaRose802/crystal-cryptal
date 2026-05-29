@@ -1,0 +1,45 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# `enrollDevice`
+
+**Signature:** `fleetEnabled validMetadata authResult activationResult`
+
+4.2 enrollDevice (activate)
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | ~ fleetEnabled | [ER_Disabled](../types.md#enrollmentresult) |
+| 2 | ~ validMetadata | [ER_Unauthorized](../types.md#enrollmentresult) |
+| 3 | authResult == [AR_Authenticated](../types.md#authresult) |  |
+| 4 | activationResult == [AC_Success](../types.md#activationresult) | [ER_Succeeded](../types.md#enrollmentresult) |
+| 5 | activationResult == [AC_AlreadyActive](../types.md#activationresult) | [ER_Unauthorized](../types.md#enrollmentresult) |
+| 6 | *(otherwise)* | [ER_InternalError](../types.md#enrollmentresult)) |
+| 7 | authResult == [AR_VaultUnavailable](../types.md#authresult) | [ER_InternalError](../types.md#enrollmentresult) |
+| 8 | *(otherwise)* | [ER_Unauthorized](../types.md#enrollmentresult) |
+
+### Related Properties
+- [P1 — Key Monotonicity](../properties/key-lifecycle-safety.md#p1--key-monotonicity)
+- [P5 — Disabled Rejects All](../properties/key-lifecycle-safety.md#p5--disabled-rejects-all)
+- [P10 — Missing Metadata Fails](../properties/authentication-security.md#p10--missing-metadata-fails)
+- [P16 — Authenticated Activation Succeeds](../properties/protocol-liveness.md#p16--authenticated-activation-succeeds)
+- [P19 — Vault Unavailable Is Internal](../properties/error-handling.md#p19--vault-unavailable-is-internal)
+- [P21 — Activate Without Metadata Unauthorized](../properties/error-handling.md#p21--activate-without-metadata-unauthorized)
+- [P22 — Activation Io Failure Is Internal](../properties/error-handling.md#p22--activation-io-failure-is-internal)
+
+<details><summary>Formal definition (Cryptol)</summary>
+
+```cryptol
+enrollDevice fleetEnabled validMetadata authResult activationResult =
+  if ~ fleetEnabled                       then ER_Disabled
+   | ~ validMetadata                      then ER_Unauthorized
+   | authResult == AR_Authenticated       then
+        (if activationResult == AC_Success       then ER_Succeeded
+          | activationResult == AC_AlreadyActive then ER_Unauthorized
+         else                                         ER_InternalError)
+   | authResult == AR_VaultUnavailable    then ER_InternalError
+  else                                         ER_Unauthorized
+```
+
+</details>

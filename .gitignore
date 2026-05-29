@@ -3,3 +3,11 @@
 .dolt/
 *.db
 .beads-credential-key
+
+
+# Added by cargo
+/target
+
+# Generated output (re-create with `cargo run -- SDEP.cry -o demo_output`)
+demo_output/
+test_output/

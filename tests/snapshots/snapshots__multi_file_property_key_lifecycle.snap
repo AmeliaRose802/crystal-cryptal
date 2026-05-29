@@ -1,0 +1,84 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# Key Lifecycle Safety
+
+### P1 — Key Monotonicity
+
+P1: Key Monotonicity. Once a key is active, any subsequent activation
+attempt returns AlreadyActive. We model "the activation outcome when the
+key is already active" as a function of the activation oracle; the spec
+states this as an invariant on activationResult, which we express as:
+for any inputs, if the system reports the key is active then [enrollDevice](../functions/enrollDevice.md)
+can never return Succeeded.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isAuthResult authResult ==>
+keyAlreadyActive ==>
+enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
+!= ER_Succeeded
+```
+
+</details>
+
+### P2 — Active Prevents Provisioning
+
+P2: Active prevents provisioning.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+isKeyVaultResult vaultResult ==>
+fleetEnabled ==>
+validRequest ==>
+vaultResult == KV_Ok ==>
+provisionKey fleetEnabled validRequest vaultResult True
+== PR_Unauthorized
+```
+
+</details>
+
+### P3 — Key Id Hidden Until Active
+
+P3: Key ID hidden until active.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(getStatus fleetEnabled hasKey False keyId).keyId == none
+```
+
+</details>
+
+### P4 — Key Id Revealed When Active
+
+P4: Key ID revealed when active.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(getStatus fleetEnabled hasKey True keyId).keyId == some keyId
+```
+
+</details>
+
+### P5 — Disabled Rejects All
+
+P5: Disabled rejects all.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+authResult activationResult keyIsActive =
+isKeyVaultResult vaultResult ==>
+isAuthResult authResult ==>
+isActivationResult activationResult ==>
+(provisionKey False validRequest vaultResult keyIsActive == PR_Disabled)
+&& (enrollDevice False validMetadata authResult activationResult
+== ER_Disabled)
+```
+
+</details>

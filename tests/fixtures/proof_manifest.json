@@ -1,0 +1,8 @@
+{
+  "P1": { "status": "proven", "solver": "z3", "time_secs": 0.42 },
+  "P2": { "status": "proven", "solver": "z3", "time_secs": 0.15 },
+  "P3": { "status": "proven", "solver": "z3", "time_secs": 0.08 },
+  "P8": { "status": "assumed" },
+  "P23": { "status": "proven", "solver": "z3", "time_secs": 812.3 },
+  "P25": { "status": "not_attempted" }
+}

@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+
+echo "=== pre-commit: cargo build ==="
+RUSTFLAGS="-D warnings" cargo build --all-targets 2>&1
+
+echo "=== pre-commit: cargo clippy ==="
+cargo clippy --all-targets -- -D warnings 2>&1
+
+echo "=== pre-commit: cargo test ==="
+cargo test 2>&1
+
+echo "=== pre-commit: checking file lengths ==="
+MAX_LINES=500
+for f in $(git diff --cached --name-only --diff-filter=ACM -- '*.rs'); do
+  if [ -f "$f" ]; then
+    count=$(grep -cve '^\s*$' "$f" || true)
+    if [ "$count" -gt "$MAX_LINES" ]; then
+      echo "ERROR: $f has $count non-empty lines (max $MAX_LINES)"
+      exit 1
+    fi
+  fi
+done
+
+echo "=== pre-commit: all checks passed ==="

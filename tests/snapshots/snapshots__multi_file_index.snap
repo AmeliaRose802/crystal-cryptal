@@ -1,0 +1,50 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# SDEP
+
+Secure Device Enrollment Protocol (SDEP) — Cryptol specification
+
+This module specifies the pure decision logic of SDEP and encodes the
+22 security properties (P1–P22) from spec.md as Cryptol `property`
+declarations suitable for proof with SAW/Z3.
+
+## Types
+
+All type definitions: [types.md](types.md)
+
+## Functions
+
+| Function | Description |
+|----------|-------------|
+| [none](functions/none.md) |  |
+| [some](functions/some.md) |  |
+| [provisionKey](functions/provisionKey.md) | ////////////////////////////////////////////////////////////////////////////// |
+| [enrollDevice](functions/enrollDevice.md) | 4.2 enrollDevice (activate) |
+| [authenticate](functions/authenticate.md) | 4.3 authenticate |
+| [isValidRequestDate](functions/isValidRequestDate.md) |  |
+| [hmacSha256](functions/hmacSha256.md) | Uninterpreted in proofs (SAW can treat this as a Cryptol primitive). |
+| [isValidSignature](functions/isValidSignature.md) |  |
+| [enforceAccess](functions/enforceAccess.md) | 4.5 enforceAccess |
+| [getStatus](functions/getStatus.md) | 4.6 getStatus |
+| [canonNormalized](functions/canonNormalized.md) | A field is normalized iff bytes at indices >= n are zero. |
+| [canonLenPrefixed](functions/canonLenPrefixed.md) | Length-prefixed canonicalization. |
+| [fieldNormalized](functions/fieldNormalized.md) |  |
+| [requestNormalized](functions/requestNormalized.md) |  |
+| [lpField](functions/lpField.md) | Length-prefix a Field as [len-byte] # buf. |
+| [lpHeader](functions/lpHeader.md) | Length-prefix a header pair OR emit a constant-size all-zero placeholder |
+| [canonicalizeS](functions/canonicalizeS.md) | Concrete canonicalize: length-prefixed method, body, headers (with |
+| [verifierTimestamp_current](functions/verifierTimestamp_current.md) |  |
+
+## Security Properties
+
+| Category | Properties |
+|----------|------------|
+| [Key Lifecycle Safety](properties/key-lifecycle-safety.md) | P1–P5 |
+| [Authentication Security](properties/authentication-security.md) | P6–P10 |
+| [Access Control](properties/access-control.md) | P11–P14 |
+| [Protocol Liveness](properties/protocol-liveness.md) | P15–P18 |
+| [Error Handling](properties/error-handling.md) | P19–P27 |
+| [Auth-header exclusion](properties/auth-header-exclusion.md) | P28 |
+| [Timestamp binding](properties/timestamp-binding.md) | P29 |
