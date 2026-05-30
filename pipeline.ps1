@@ -94,13 +94,13 @@ Set-StrictMode -Version Latest
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 function Invoke-PrettySpecs {
-    param([string[]]$Args)
+    param([string[]]$ArgsList)
     if ($PrettySpecs -eq "cargo run --") {
         $cmd = "cargo"
-        $allArgs = @("run", "--") + $Args
+        $allArgs = @("run", "--") + $ArgsList
     } else {
         $cmd = $PrettySpecs
-        $allArgs = $Args
+        $allArgs = $ArgsList
     }
     Write-Host "  > $cmd $($allArgs -join ' ')" -ForegroundColor DarkGray
     & $cmd @allArgs
