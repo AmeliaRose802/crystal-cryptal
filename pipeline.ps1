@@ -46,6 +46,19 @@
 .PARAMETER ManifestOutput
     Path for the unified proof_manifest.json. Default: ./proof_manifest.json
 
+.PARAMETER CxxIncludeDirs
+    Extra include directories passed to clang via -I (C++ only). Maps to
+    verify.ps1's -IncludeDirs. Pass multiple values as a comma-separated list:
+    -CxxIncludeDirs cpp\include,cpp\third_party.
+
+.PARAMETER CxxStandard
+    C++ standard passed to clang as -std=<value> (e.g. "c++20"). Maps to
+    verify.ps1's -CxxStandard.
+
+.PARAMETER ExtraClangFlags
+    Additional flags forwarded verbatim to every clang invocation (C++ only).
+    Maps to verify.ps1's -ClangFlags. Example: -ExtraClangFlags '-fexceptions','-fno-inline'.
+
 .PARAMETER SkipVerify
     Skip saw-spec-gen verification (Steps 1–2). Still adapts existing results
     if VerifyOutput already contains result.json files.
@@ -83,6 +96,9 @@ param(
     [string]$PrettySpecs = "pretty-specs",
     [string]$VerifyOutput = "verify_out",
     [string]$ManifestOutput = "proof_manifest.json",
+    [string[]]$CxxIncludeDirs = @(),
+    [string]$CxxStandard = "",
+    [string[]]$ExtraClangFlags = @(),
     [switch]$SkipVerify,
     [switch]$SkipAdapt,
     [switch]$SkipDocs
@@ -176,12 +192,22 @@ if (-not $SkipVerify -and $Impl -ne "") {
 
         Write-Host "  Verifying $name ..." -NoNewline
         try {
+            # Build optional clang pass-through args (C++ only; verify-rust.ps1
+            # does not accept these and Rust compilation is fully self-contained).
+            $verifyExtraArgs = @()
+            if ($ImplLang -eq "cpp") {
+                if ($CxxIncludeDirs.Count -gt 0) { $verifyExtraArgs += "-IncludeDirs"; $verifyExtraArgs += ,$CxxIncludeDirs }
+                if ($CxxStandard -ne "")         { $verifyExtraArgs += "-CxxStandard"; $verifyExtraArgs += $CxxStandard }
+                if ($ExtraClangFlags.Count -gt 0) { $verifyExtraArgs += "-ClangFlags"; $verifyExtraArgs += ,$ExtraClangFlags }
+            }
+
             & $verifyScript `
                 $implParam $Impl `
                 -CryptolSpec $Spec `
                 -CryptolFn $cryptol `
                 -Function $name `
-                -OutputDir $outDir
+                -OutputDir $outDir `
+                @verifyExtraArgs
             if ($LASTEXITCODE -eq 0) {
                 Write-Host " ok" -ForegroundColor Green
                 $passed++
