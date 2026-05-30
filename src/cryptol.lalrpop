@@ -1,0 +1,243 @@
+// Cryptol grammar for pretty-specs.
+//
+// Handles:
+//   1. Module header  (module Name where)
+//   2. Declaration classification by leading keyword
+//   3. Block nesting  (balanced brackets)
+//
+// Declaration bodies are consumed as balanced tokens; Rust code in parser.rs
+// extracts names, signatures, and bodies from the classified spans.
+
+use crate::lexer::Tok;
+use crate::parser::DeclKind;
+
+grammar<'input>(source: &'input str);
+
+// ── Entry point ─────────────────────────────────────────────────────────────
+
+pub Program: (Option<String>, Vec<(DeclKind, usize, usize)>) = {
+    MbDocs "module" <n:ModName> "where" "v{" <ds:Decls> "v}" =>
+        (Some(n), ds),
+    "v{" <ds:Decls> "v}" =>
+        (None, ds),
+    => (None, Vec::new()),
+};
+
+MbDocs: () = {
+    => (),
+    MbDocs DOC => (),
+};
+
+ModName: String = {
+    IDENT => <>,
+    "x" => "x".to_string(),
+    "private" => "private".to_string(),
+    "as" => "as".to_string(),
+    "hiding" => "hiding".to_string(),
+    "module" => "module".to_string(),
+    QIDENT => { let (q, n) = <>; format!("{q}{n}") },
+};
+
+// ── Declaration list ────────────────────────────────────────────────────────
+
+Decls: Vec<(DeclKind, usize, usize)> = {
+    => Vec::new(),
+    <mut v:Decls> <d:OneDecl> => { if let Some(d) = d { v.push(d); } v },
+};
+
+OneDecl: Option<(DeclKind, usize, usize)> = {
+    // ── Classified declarations ──
+    <l:@L> Docs "type"       Tail <r:@R> Sep => Some((DeclKind::Type, l, r)),
+    <l:@L> Docs "property"   Tail <r:@R> Sep => Some((DeclKind::Property, l, r)),
+    <l:@L> Docs "primitive"  Tail <r:@R> Sep => Some((DeclKind::Primitive, l, r)),
+    <l:@L> Docs "foreign"    Tail <r:@R> Sep => Some((DeclKind::Foreign, l, r)),
+    <l:@L> Docs "newtype"    Tail <r:@R> Sep => Some((DeclKind::Newtype, l, r)),
+    <l:@L> Docs "enum"       Tail <r:@R> Sep => Some((DeclKind::Enum, l, r)),
+
+    // ── Skipped declarations ──
+    <l:@L> Docs "import"     Tail <r:@R> Sep => Some((DeclKind::Import, l, r)),
+    <l:@L> Docs "include"    Tail <r:@R> Sep => None,
+    <l:@L> Docs "infixl"     Tail <r:@R> Sep => None,
+    <l:@L> Docs "infixr"     Tail <r:@R> Sep => None,
+    <l:@L> Docs "infix"      Tail <r:@R> Sep => None,
+    <l:@L> Docs "private"    Tail <r:@R> Sep => Some((DeclKind::SigOrBind, l, r)),
+    <l:@L> Docs "parameter"  Tail <r:@R> Sep => Some((DeclKind::Parameter, l, r)),
+    <l:@L> Docs "interface"  Tail <r:@R> Sep => None,
+
+    // ── Generic (signature or binding) ──
+    <l:@L> Docs PlainStart Tail <r:@R> Sep => Some((DeclKind::SigOrBind, l, r)),
+
+    // ── Standalone doc comments / empty ──
+    <l:@L> Docs <r:@R> Sep => {
+        if l < r { Some((DeclKind::SigOrBind, l, r)) } else { None }
+    },
+};
+
+// Zero or more doc comments before the keyword / first token
+Docs: () = { => (), Docs DOC => () };
+
+// Declaration separator
+Sep: () = { "v;", ";" };
+
+// ── Balanced token consumers ────────────────────────────────────────────────
+
+// Zero or more balanced tokens after a classified keyword or PlainStart
+Tail: () = { => (), Tail TailElem => () };
+
+TailElem: () = {
+    AnyTok        => (),
+    "(" Inner ")" => (),
+    "[" Inner "]" => (),
+    "{" Inner "}" => (),
+    "v{" Inner "v}" => (),
+};
+
+// First token of a generic declaration — everything except DOC, classifying
+// keywords, brackets, and separators.
+PlainStart: () = {
+    NUM => (), FRAC => (), STRLIT => (), CHARLIT => (),
+    IDENT => (), QIDENT => (), SELECTOR => (), OP => (), QOP => (),
+
+    "else" => (), "if" => (), "case" => (), "of" => (),
+    "module" => (), "submodule" => (), "deriving" => (),
+    "then" => (), "where" => (), "let" => (), "x" => (),
+    "as" => (), "hiding" => (), "constraint" => (),
+    "Prop" => (), "by" => (), "down" => (),
+
+    "|" => (), "<-" => (), "->" => (), "=>" => (), "\\" => (),
+    "=" => (), "," => (), ":" => (), "`" => (),
+    ".." => (), "..." => (), "..<" => (), "..>" => (),
+    "<|" => (), "|>" => (), "<" => (), ">" => (), "_" => (),
+    "+" => (), "-" => (), "*" => (), "^^" => (),
+    "#" => (), "@" => (), "~" => (),
+
+    "(" Inner ")" => (),
+    "[" Inner "]" => (),
+    "{" Inner "}" => (),
+    "v{" Inner "v}" => (),
+};
+
+// Inside balanced brackets: everything including separators
+Inner: () = {
+    => (),
+    Inner AnyTok        => (),
+    Inner "v;"           => (),
+    Inner ";"            => (),
+    Inner "(" Inner ")"  => (),
+    Inner "[" Inner "]"  => (),
+    Inner "{" Inner "}"  => (),
+    Inner "v{" Inner "v}" => (),
+};
+
+// Every non-bracket non-separator token (used in Tail and Inner)
+AnyTok: () = {
+    NUM => (), FRAC => (), STRLIT => (), CHARLIT => (),
+    IDENT => (), QIDENT => (), SELECTOR => (), OP => (), QOP => (),
+    DOC => (),
+
+    "else" => (), "if" => (), "case" => (), "of" => (),
+    "private" => (), "include" => (), "module" => (), "submodule" => (),
+    "interface" => (), "newtype" => (), "enum" => (), "deriving" => (),
+    "property" => (), "then" => (), "type" => (), "where" => (),
+    "let" => (), "x" => (), "import" => (), "as" => (), "hiding" => (),
+    "infixl" => (), "infixr" => (), "infix" => (), "primitive" => (),
+    "parameter" => (), "constraint" => (), "foreign" => (),
+    "Prop" => (), "by" => (), "down" => (),
+
+    "|" => (), "<-" => (), "->" => (), "=>" => (), "\\" => (),
+    "=" => (), "," => (), ":" => (), "`" => (),
+    ".." => (), "..." => (), "..<" => (), "..>" => (),
+    "<|" => (), "|>" => (), "<" => (), ">" => (), "_" => (),
+    "+" => (), "-" => (), "*" => (), "^^" => (),
+    "#" => (), "@" => (), "~" => (),
+};
+
+// ── Extern token mapping ───────────────────────────────────────────────────
+
+extern {
+    type Location = usize;
+    type Error = crate::lexer::LexError;
+
+    enum Tok {
+        NUM => Tok::Num(<u64>, <u8>),
+        FRAC => Tok::Frac(<String>),
+        STRLIT => Tok::StrLit(<String>),
+        CHARLIT => Tok::ChrLit(<char>),
+        IDENT => Tok::Ident(<String>),
+        QIDENT => Tok::QualIdent(<String>, <String>),
+        SELECTOR => Tok::Selector(<String>),
+        OP => Tok::Op(<String>),
+        QOP => Tok::QualOp(<String>, <String>),
+        DOC => Tok::Doc(<String>),
+
+        "else" => Tok::KwElse,
+        "if" => Tok::KwIf,
+        "case" => Tok::KwCase,
+        "of" => Tok::KwOf,
+        "private" => Tok::KwPrivate,
+        "include" => Tok::KwInclude,
+        "module" => Tok::KwModule,
+        "submodule" => Tok::KwSubmodule,
+        "interface" => Tok::KwInterface,
+        "newtype" => Tok::KwNewtype,
+        "enum" => Tok::KwEnum,
+        "deriving" => Tok::KwDeriving,
+        "property" => Tok::KwProperty,
+        "then" => Tok::KwThen,
+        "type" => Tok::KwType,
+        "where" => Tok::KwWhere,
+        "let" => Tok::KwLet,
+        "x" => Tok::KwX,
+        "import" => Tok::KwImport,
+        "as" => Tok::KwAs,
+        "hiding" => Tok::KwHiding,
+        "infixl" => Tok::KwInfixl,
+        "infixr" => Tok::KwInfixr,
+        "infix" => Tok::KwInfix,
+        "primitive" => Tok::KwPrimitive,
+        "parameter" => Tok::KwParameter,
+        "constraint" => Tok::KwConstraint,
+        "foreign" => Tok::KwForeign,
+        "Prop" => Tok::KwProp,
+        "by" => Tok::KwBy,
+        "down" => Tok::KwDown,
+
+        "|" => Tok::Bar,
+        "<-" => Tok::ArrL,
+        "->" => Tok::ArrR,
+        "=>" => Tok::FatArrR,
+        "\\" => Tok::Lambda,
+        "=" => Tok::EqDef,
+        "," => Tok::Comma,
+        ";" => Tok::Semi,
+        ":" => Tok::Colon,
+        "`" => Tok::BackTick,
+        ".." => Tok::DotDot,
+        "..." => Tok::DotDotDot,
+        "..<" => Tok::DotDotLt,
+        "..>" => Tok::DotDotGt,
+        "(" => Tok::ParenL,
+        ")" => Tok::ParenR,
+        "[" => Tok::BracketL,
+        "]" => Tok::BracketR,
+        "{" => Tok::CurlyL,
+        "}" => Tok::CurlyR,
+        "<|" => Tok::TriL,
+        "|>" => Tok::TriR,
+        "<" => Tok::Lt,
+        ">" => Tok::Gt,
+        "_" => Tok::Underscore,
+
+        "+" => Tok::Plus,
+        "-" => Tok::Minus,
+        "*" => Tok::Star,
+        "^^" => Tok::Exp,
+        "#" => Tok::Hash,
+        "@" => Tok::At,
+        "~" => Tok::Complement,
+
+        "v{" => Tok::VCurlyL,
+        "v}" => Tok::VCurlyR,
+        "v;" => Tok::VSemi,
+    }
+}

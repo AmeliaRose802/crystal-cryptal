@@ -88,6 +88,16 @@ fn snapshot_multi_file_fn_authenticate() {
 }
 
 #[test]
+fn snapshot_multi_file_fn_verifier_timestamp_current() {
+    let (items, symbols) = load_sdep();
+    let dir = render_to("fn_verifier_timestamp");
+    render_multi_file(&items, &symbols, &dir, &default_options()).unwrap();
+    let content = fs::read_to_string(dir.join("functions/verifierTimestamp_current.md")).unwrap();
+    insta::assert_snapshot!("multi_file_fn_verifier_timestamp_current", content);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn snapshot_multi_file_fn_enroll_device() {
     let (items, symbols) = load_sdep();
     let dir = render_to("fn_enroll");
@@ -186,4 +196,44 @@ fn windows_line_endings() {
     let source = "module WinTest where\r\n\r\ntype Foo = [8]\r\n";
     let items = parse(source);
     assert!(items.iter().any(|item| matches!(item, Item::Module { name, .. } if name == "WinTest")));
+}
+
+#[test]
+fn functions_index_call_graph_includes_all_function_rows() {
+    let (items, symbols) = load_sdep();
+    let dir = render_to("fn_index_graph_nodes");
+    render_multi_file(&items, &symbols, &dir, &default_options()).unwrap();
+    let content = fs::read_to_string(dir.join("functions/index.md")).unwrap();
+
+    let mut function_rows = 0usize;
+    let mut graph_nodes = std::collections::HashSet::new();
+    let mut in_mermaid = false;
+    for line in content.lines() {
+        if line == "```mermaid" {
+            in_mermaid = true;
+            continue;
+        }
+        if in_mermaid && line == "```" {
+            in_mermaid = false;
+            continue;
+        }
+
+        if line.starts_with("| [") {
+            function_rows += 1;
+        }
+
+        if in_mermaid && line.starts_with("  ") && line.contains("[\"") {
+            if let Some((name, _)) = line.trim().split_once("[\"") {
+                graph_nodes.insert(name.to_string());
+            }
+        }
+    }
+
+    assert_eq!(
+        function_rows,
+        graph_nodes.len(),
+        "functions/index.md table row count must match call graph node count"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }

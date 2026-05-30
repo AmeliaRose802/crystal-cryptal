@@ -36,6 +36,11 @@ pub enum Item {
         name: String,
         doc: Vec<String>,
     },
+    Import {
+        module_path: String,
+        qualifier: Option<String>,
+        hiding: Vec<String>,
+    },
     Section {
         level: u8,
         title: String,
@@ -76,6 +81,19 @@ pub enum Item {
     CommentBlock {
         lines: Vec<String>,
     },
+    ModuleParam {
+        name: String,
+        kind: ParamKind,
+        signature: String,
+        doc: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ParamKind {
+    TypeParam,
+    ValueParam,
+    Constraint,
 }
 
 /// Helper for deserializing proof manifest entries using `#[serde(tag = "status")]`.

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+
+  file-length:
+    name: File length limits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check src/ files are under 500 lines
+        run: |
+          MAX=500
+          failed=0
+          for f in $(find src -name '*.rs'); do
+            lines=$(wc -l < "$f")
+            if [ "$lines" -gt "$MAX" ]; then
+              echo "::error file=$f::$f has $lines lines (limit: $MAX)"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo ""
+            echo "One or more files exceed the $MAX-line limit. Split large files before merging."
+            exit 1
+          fi
+          echo "All files within $MAX-line limit."

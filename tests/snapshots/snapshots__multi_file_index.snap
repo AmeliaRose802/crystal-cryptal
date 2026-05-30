@@ -4,38 +4,61 @@ expression: content
 ---
 # SDEP
 
-Secure Device Enrollment Protocol (SDEP) — Cryptol specification
-
-This module specifies the pure decision logic of SDEP and encodes the
-22 security properties (P1–P22) from spec.md as Cryptol `property`
-declarations suitable for proof with SAW/Z3.
-
 ## Types
 
 All type definitions: [types.md](types.md)
 
 ## Functions
 
-| Function | Description |
-|----------|-------------|
-| [none](functions/none.md) |  |
-| [some](functions/some.md) |  |
-| [provisionKey](functions/provisionKey.md) | ////////////////////////////////////////////////////////////////////////////// |
-| [enrollDevice](functions/enrollDevice.md) | 4.2 enrollDevice (activate) |
-| [authenticate](functions/authenticate.md) | 4.3 authenticate |
-| [isValidRequestDate](functions/isValidRequestDate.md) |  |
-| [hmacSha256](functions/hmacSha256.md) | Uninterpreted in proofs (SAW can treat this as a Cryptol primitive). |
-| [isValidSignature](functions/isValidSignature.md) |  |
-| [enforceAccess](functions/enforceAccess.md) | 4.5 enforceAccess |
-| [getStatus](functions/getStatus.md) | 4.6 getStatus |
-| [canonNormalized](functions/canonNormalized.md) | A field is normalized iff bytes at indices >= n are zero. |
-| [canonLenPrefixed](functions/canonLenPrefixed.md) | Length-prefixed canonicalization. |
-| [fieldNormalized](functions/fieldNormalized.md) |  |
-| [requestNormalized](functions/requestNormalized.md) |  |
-| [lpField](functions/lpField.md) | Length-prefix a Field as [len-byte] # buf. |
-| [lpHeader](functions/lpHeader.md) | Length-prefix a header pair OR emit a constant-size all-zero placeholder |
-| [canonicalizeS](functions/canonicalizeS.md) | Concrete canonicalize: length-prefixed method, body, headers (with |
-| [verifierTimestamp_current](functions/verifierTimestamp_current.md) |  |
+All function definitions: [functions](functions/index.md)
+
+### Call Graph
+
+```mermaid
+graph LR
+  authenticate["authenticate"]
+  click authenticate "functions/authenticate.md" "authenticate"
+  canonLenPrefixed["canonLenPrefixed"]
+  click canonLenPrefixed "functions/canonLenPrefixed.md" "canonLenPrefixed"
+  canonNormalized["canonNormalized"]
+  click canonNormalized "functions/canonNormalized.md" "canonNormalized"
+  canonicalizeS["canonicalizeS"]
+  click canonicalizeS "functions/canonicalizeS.md" "canonicalizeS"
+  enforceAccess["enforceAccess"]:::decision
+  click enforceAccess "functions/enforceAccess.md" "enforceAccess"
+  enrollDevice["enrollDevice"]:::decision
+  click enrollDevice "functions/enrollDevice.md" "enrollDevice"
+  fieldNormalized["fieldNormalized"]
+  click fieldNormalized "functions/fieldNormalized.md" "fieldNormalized"
+  getStatus["getStatus"]
+  click getStatus "functions/getStatus.md" "getStatus"
+  hmacSha256["hmacSha256"]
+  click hmacSha256 "functions/hmacSha256.md" "hmacSha256"
+  isValidRequestDate["isValidRequestDate"]
+  click isValidRequestDate "functions/isValidRequestDate.md" "isValidRequestDate"
+  isValidSignature["isValidSignature"]
+  click isValidSignature "functions/isValidSignature.md" "isValidSignature"
+  lpField["lpField"]
+  click lpField "functions/lpField.md" "lpField"
+  lpHeader["lpHeader"]
+  click lpHeader "functions/lpHeader.md" "lpHeader"
+  provisionKey["provisionKey"]:::decision
+  click provisionKey "functions/provisionKey.md" "provisionKey"
+  requestNormalized["requestNormalized"]
+  click requestNormalized "functions/requestNormalized.md" "requestNormalized"
+  verifierTimestamp_current["verifierTimestamp_current"]
+  click verifierTimestamp_current "functions/verifierTimestamp_current.md" "verifierTimestamp_current"
+  canonicalizeS --> lpField
+  canonicalizeS --> lpHeader
+  isValidSignature --> hmacSha256
+  lpHeader --> lpField
+  requestNormalized --> fieldNormalized
+  classDef default fill:#f8fafc,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef decision fill:#ecfeff,stroke:#0e7490,stroke-width:1.5px,color:#164e63
+  classDef stub fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px,stroke-dasharray: 5 5,color:#7c2d12
+```
+
+**Key:** 🔵 function · 🟢 decision
 
 ## Security Properties
 

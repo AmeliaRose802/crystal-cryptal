@@ -4,11 +4,23 @@ expression: content
 ---
 # `authenticate`
 
-**Signature:** `Bit -> Bit -> Bit -> Bit`
+### Signature
 
-4.3 authenticate
+**Parameters**
+- `dateValid`: Bit
+- `signatureValid`: Bit
+- `claimsValid`: Bit
 
-dateValid && signatureValid && claimsValid
+**Returns**
+- Bit
+
+<details><summary>Raw signature</summary>
+
+`Bit -> Bit -> Bit -> Bit`
+
+</details>
+
+Returns `True` only when all of `dateValid`, `signatureValid`, and `claimsValid` are true.
 
 ### Related Properties
 - [P6 — Auth Requires Valid Date](../properties/authentication-security.md#p6--auth-requires-valid-date)

@@ -13,6 +13,8 @@ states this as an invariant on activationResult, which we express as:
 for any inputs, if the system reports the key is active then [enrollDevice](../functions/enrollDevice.md)
 can never return Succeeded.
 
+**Involved:** [`AC_AlreadyActive`](../types.md#activationresult), [`ER_Succeeded`](../types.md#enrollmentresult), [`enrollDevice`](../functions/enrollDevice.md)
+
 <details><summary>Formal property (Cryptol)</summary>
 
 ```cryptol
@@ -27,6 +29,8 @@ enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
 ### P2 — Active Prevents Provisioning
 
 P2: Active prevents provisioning.
+
+**Involved:** [`KV_Ok`](../types.md#keyvaultresult), [`PR_Unauthorized`](../types.md#provisionresult), [`provisionKey`](../functions/provisionKey.md)
 
 <details><summary>Formal property (Cryptol)</summary>
 
@@ -45,6 +49,8 @@ provisionKey fleetEnabled validRequest vaultResult True
 
 P3: Key ID hidden until active.
 
+**Involved:** [`getStatus`](../functions/getStatus.md)
+
 <details><summary>Formal property (Cryptol)</summary>
 
 ```cryptol
@@ -56,6 +62,8 @@ P3: Key ID hidden until active.
 ### P4 — Key Id Revealed When Active
 
 P4: Key ID revealed when active.
+
+**Involved:** [`getStatus`](../functions/getStatus.md)
 
 <details><summary>Formal property (Cryptol)</summary>
 
@@ -69,10 +77,11 @@ P4: Key ID revealed when active.
 
 P5: Disabled rejects all.
 
+**Involved:** [`ER_Disabled`](../types.md#enrollmentresult), [`PR_Disabled`](../types.md#provisionresult), [`enrollDevice`](../functions/enrollDevice.md), [`provisionKey`](../functions/provisionKey.md)
+
 <details><summary>Formal property (Cryptol)</summary>
 
 ```cryptol
-authResult activationResult keyIsActive =
 isKeyVaultResult vaultResult ==>
 isAuthResult authResult ==>
 isActivationResult activationResult ==>

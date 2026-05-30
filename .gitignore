@@ -5,9 +5,16 @@
 .beads-credential-key
 
 
+# Third-party example specs (re-download via examples/README.md)
+examples/*.cry
+examples/out_*/
+
 # Added by cargo
 /target
 
 # Generated output (re-create with `cargo run -- SDEP.cry -o demo_output`)
 demo_output/
 test_output/
+
+# Internal specs (do not commit)
+do_NOT_COMMIT_INTERNAL/

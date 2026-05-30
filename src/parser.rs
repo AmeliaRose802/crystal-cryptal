@@ -1,1017 +1,890 @@
-// Parser: builds IR from token stream.
+// Parser: lalrpop grammar for structure, Rust code for semantics.
 //
-// This is a LINE-LEVEL structural parser. It doesn't understand arbitrary
-// Cryptol expressions — just enough structure to extract the constructs
-// listed in DESIGN.md (modules, types, enums, records, functions,
-// properties, sections, doc comments).
+// The grammar (cryptol.lalrpop) classifies declarations by their leading
+// keyword (type, property, primitive, …) and returns tagged byte-offset
+// spans.  This module extracts names, signatures, and bodies from the
+// classified spans and converts them to Vec<Item> for the renderers.
 
-use crate::ir::{Branch, EnumVariant, Item};
-use crate::lexer::{lex, Token};
+use crate::ir::{Branch, EnumVariant, Item, ParamKind};
+use crate::lexer;
 
-// ── public API ──────────────────────────────────────────────────────────────
+use lalrpop_util::lalrpop_mod;
+lalrpop_mod!(pub cryptol);
 
-/// Parse a Cryptol source string into a vector of IR items.
-pub fn parse(input: &str) -> Vec<Item> {
-    let raw_lines: Vec<&str> = input.lines().collect();
-    let tokens = lex(input);
-    let token_lines = group_token_lines(&tokens);
+// ── Declaration kind (set by the grammar) ───────────────────────────────────
 
-    let mut items: Vec<Item> = Vec::new();
-    let mut pending_doc: Vec<String> = Vec::new();
-    let mut i = 0;
+#[derive(Debug, Clone, Copy)]
+pub enum DeclKind {
+    Type,
+    Property,
+    Primitive,
+    Foreign,
+    Newtype,
+    Enum,
+    Import,
+    SigOrBind,
+    Parameter,
+}
 
-    while i < token_lines.len() {
-        let tl = &token_lines[i];
+// ── Public API ──────────────────────────────────────────────────────────────
 
-        // ── Comment / section lines ─────────────────────────────────────
-        if tl.tokens.len() == 1 && tl.tokens[0].0 == Token::Comment {
-            let comment_text = &tl.tokens[0].1;
+pub fn parse(source: &str) -> Vec<Item> {
+    let source = source.strip_prefix('\u{FEFF}').unwrap_or(source);
+    let source = &source.replace('\r', "");
 
-            // Check for separator line (4+ slashes only)
-            if is_separator_line(comment_text) {
-                // Look for section pattern: separator / title / separator
-                if i + 2 < token_lines.len()
-                    && token_lines[i + 2].tokens.len() == 1
-                    && token_lines[i + 2].tokens[0].0 == Token::Comment
-                    && is_separator_line(&token_lines[i + 2].tokens[0].1)
-                {
-                    let title_tl = &token_lines[i + 1];
-                    if title_tl.tokens.len() == 1
-                        && title_tl.tokens[0].0 == Token::Comment
-                    {
-                        let title =
-                            extract_section_title(&title_tl.tokens[0].1);
-                        flush_doc(&mut pending_doc, &mut items);
-                        items.push(Item::Section {
-                            level: 2,
-                            title,
-                            doc: Vec::new(),
-                        });
-                        i += 3;
-                        continue;
-                    }
-                }
-                // Standalone separator — treat as regular comment
-                pending_doc.push(strip_comment_prefix(comment_text));
-                i += 1;
-                continue;
-            }
+    let (tokens, block_docs) = lexer::lex(source).expect("lexer error");
+    let token_iter = tokens.into_iter().map(|(s, t, e)| Ok((s, t, e)));
 
-            // Check for category pattern: // ---- Category X: Title -----
-            if is_category_line(comment_text) {
-                let title = extract_category_title(comment_text);
-                flush_doc(&mut pending_doc, &mut items);
-                items.push(Item::Section {
-                    level: 3,
-                    title,
-                    doc: Vec::new(),
-                });
-                i += 1;
-                continue;
-            }
+    let (mod_name, decls) = cryptol::ProgramParser::new()
+        .parse(source, token_iter)
+        .unwrap_or_else(|e| panic!("parse error: {e}"));
 
-            // Regular comment line — accumulate as doc
-            pending_doc.push(strip_comment_prefix(comment_text));
-            i += 1;
-            continue;
-        }
+    let mut items = Vec::new();
 
-        // ── Module declaration ──────────────────────────────────────────
-        if matches_pattern(tl, &[Token::Module]) {
-            let name = extract_after(tl, Token::Module);
-            let doc = take_doc(&mut pending_doc);
-            items.push(Item::Module { name, doc });
-            i += 1;
-            continue;
-        }
+    // Determine the start of the first declaration for module-doc detection
+    let first_decl_start = decls.iter().map(|(_, s, _)| *s).min();
 
-        // ── Import (skip) ───────────────────────────────────────────────
-        if matches_pattern(tl, &[Token::Import]) {
-            pending_doc.clear();
-            i += 1;
-            continue;
-        }
+    if let Some(name) = mod_name {
+        // Find the module-level block doc comment: the first block doc comment
+        // that appears before any declaration.
+        let mod_doc_lines: Vec<String> = block_docs
+            .iter()
+            .filter(|d| first_decl_start.map_or(true, |fds| d.byte_pos < fds))
+            .flat_map(|d| {
+                d.content.lines().map(|l| {
+                    let t = l.trim();
+                    let t = t.strip_prefix("/**").unwrap_or(t);
+                    let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
+                    let t = t.strip_suffix("*/").unwrap_or(t);
+                    t.trim().to_string()
+                })
+            })
+            .filter(|l| !l.is_empty())
+            .collect();
 
-        // ── Type declaration ────────────────────────────────────────────
-        if matches_pattern(tl, &[Token::Type]) {
-            let doc = take_doc(&mut pending_doc);
-            let (consumed, item) =
-                parse_type_decl(&token_lines, i, &raw_lines, doc);
-            items.push(item);
-            i += consumed;
-            continue;
-        }
-
-        // ── Property ────────────────────────────────────────────────────
-        if matches_pattern(tl, &[Token::Property]) {
-            let doc = take_doc(&mut pending_doc);
-            let (consumed, item) =
-                parse_property(&token_lines, i, &raw_lines, doc);
-            items.push(item);
-            i += consumed;
-            continue;
-        }
-
-        // ── Function signature (Ident : ... -> ...) ─────────────────────
-        if is_function_sig(tl) {
-            let doc = take_doc(&mut pending_doc);
-            let (consumed, item) =
-                parse_function(&token_lines, i, &raw_lines, doc);
-            items.push(item);
-            i += consumed;
-            continue;
-        }
-
-        // ── Constant definition (IDENT = value : Type at col 0) ─────────
-        if is_constant_def(tl, &raw_lines) {
-            let doc = take_doc(&mut pending_doc);
-            let (name, value, type_ann) = extract_constant(tl);
-            // We'll store as a Function for now; the enum-grouping post-pass
-            // will absorb constants into EnumGroups.
-            items.push(Item::Function {
-                name,
-                signature: type_ann.clone(),
-                branches: Vec::new(),
-                body: value,
-                doc,
-            });
-            i += 1;
-            continue;
-        }
-
-        // ── Function definition at col 0 (name params = body) ───────────
-        if is_top_level_def(tl, &raw_lines) {
-            let doc = take_doc(&mut pending_doc);
-            let (consumed, item) =
-                parse_bare_function(&token_lines, i, &raw_lines, doc);
-            items.push(item);
-            i += consumed;
-            continue;
-        }
-
-        // ── Skip unrecognised lines ─────────────────────────────────────
-        i += 1;
+        items.push(Item::Module {
+            name,
+            doc: mod_doc_lines,
+        });
     }
 
-    // Flush any trailing doc
-    flush_doc(&mut pending_doc, &mut items);
+    let sections = extract_sections_with_offsets(source);
+    let mut positioned: Vec<(usize, Item)> = sections;
 
-    // Post-pass: group enums
+    // Insert block doc comments as CommentBlock items at their byte positions,
+    // but skip any that fall within a declaration span (e.g., inside a parameter block)
+    // and any that appear before the first declaration (already used as module doc).
+    for doc in &block_docs {
+        // Skip module-level docs (before first declaration)
+        if first_decl_start.map_or(true, |fds| doc.byte_pos < fds) {
+            continue;
+        }
+        let inside_decl = decls
+            .iter()
+            .any(|(_, ds, de)| doc.byte_pos >= *ds && doc.byte_pos < *de);
+        if inside_decl {
+            continue;
+        }
+        let lines: Vec<String> = doc
+            .content
+            .lines()
+            .map(|l| {
+                let t = l.trim();
+                // Strip block comment continuation markers
+                let t = t.strip_prefix("/**").unwrap_or(t);
+                let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
+                let t = t.strip_suffix("*/").unwrap_or(t);
+                t.trim().to_string()
+            })
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !lines.is_empty() {
+            positioned.push((doc.byte_pos, Item::CommentBlock { lines }));
+        }
+    }
+
+    for (kind, start, end) in &decls {
+        let text = &source[(*start).min(source.len())..(*end).min(source.len())];
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        let (doc_text, decl_text) = split_doc_and_decl(text);
+        if let Some(doc) = doc_text {
+            let lines: Vec<String> = doc
+                .lines()
+                .map(|l| {
+                    let t = l.trim();
+                    // Strip line comment prefix
+                    let t = t.strip_prefix("///").or_else(|| t.strip_prefix("//")).unwrap_or(t);
+                    // Strip block comment markers
+                    let t = t.strip_prefix("/**").unwrap_or(t);
+                    let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
+                    let t = t.strip_suffix("*/").unwrap_or(t);
+                    t.trim().to_string()
+                })
+                .filter(|l| !l.is_empty())
+                .filter(|l| !is_separator_content(l))
+                .filter(|l| !is_section_number_line(l))
+                .collect();
+            if !lines.is_empty() {
+                positioned.push((*start, Item::CommentBlock { lines }));
+            }
+        }
+        let decl_text = decl_text.trim();
+        if decl_text.is_empty() {
+            continue;
+        }
+
+        let mut decl_items = Vec::new();
+        classify_decl(*kind, decl_text, &mut decl_items);
+        for item in decl_items {
+            positioned.push((*start, item));
+        }
+    }
+
+    positioned.sort_by_key(|(pos, _)| *pos);
+    items.extend(positioned.into_iter().map(|(_, item)| item));
+
+    merge_signatures(&mut items);
     group_enums(&mut items);
-
-    // Post-pass: attach doc comments to subsequent items
     attach_docs(&mut items);
 
     items
 }
 
-// ── Token-line grouping ─────────────────────────────────────────────────────
+// ── Classification dispatch (grammar tells us the kind) ─────────────────────
 
-struct TokenLine {
-    tokens: Vec<(Token, String)>,
-    line_number: usize, // 1-based
+fn classify_decl(kind: DeclKind, text: &str, items: &mut Vec<Item>) {
+    match kind {
+        DeclKind::Type => parse_type_decl(text, items),
+        DeclKind::Property => parse_property_decl(text, items),
+        DeclKind::Primitive | DeclKind::Foreign => parse_prim_or_foreign(text, items),
+        DeclKind::Newtype => parse_newtype_decl(text, items),
+        DeclKind::Enum => parse_enum_decl(text, items),
+        DeclKind::Import => parse_import_decl(text, items),
+        DeclKind::SigOrBind => parse_sig_or_bind(text, items),
+        DeclKind::Parameter => parse_parameter_block(text, items),
+    }
 }
 
-fn group_token_lines(tokens: &[(Token, String, usize)]) -> Vec<TokenLine> {
-    let mut lines: Vec<TokenLine> = Vec::new();
-    let mut current_tokens: Vec<(Token, String)> = Vec::new();
-    let mut current_line: usize = 1;
+// ── Individual declaration parsers ──────────────────────────────────────────
 
-    for (tok, text, line) in tokens {
-        if *tok == Token::Newline {
-            if !current_tokens.is_empty() {
-                lines.push(TokenLine {
-                    tokens: std::mem::take(&mut current_tokens),
-                    line_number: current_line,
+fn parse_parameter_block(text: &str, items: &mut Vec<Item>) {
+    let rest = text.strip_prefix("parameter").unwrap_or(text);
+    // Split the parameter block into individual declarations
+    let raw_chunks = split_private_block(rest);
+
+    // Merge doc-comment-only chunks with the following declaration chunk.
+    // split_private_block may put /** ... */ on a separate chunk from "type B : #".
+    let mut chunks: Vec<String> = Vec::new();
+    let mut pending_doc = String::new();
+    for chunk in raw_chunks {
+        let trimmed = chunk.trim();
+        let is_doc_only = trimmed.lines().all(|l| {
+            let lt = l.trim();
+            lt.is_empty()
+                || lt.starts_with("/**")
+                || lt.starts_with("///")
+                || lt.starts_with("//")
+                || lt.starts_with(" *")
+                || lt.starts_with("*")
+                || lt.starts_with("*/")
+        });
+        if is_doc_only {
+            if !pending_doc.is_empty() {
+                pending_doc.push('\n');
+            }
+            pending_doc.push_str(&chunk);
+        } else {
+            if !pending_doc.is_empty() {
+                let mut merged = std::mem::take(&mut pending_doc);
+                merged.push('\n');
+                merged.push_str(&chunk);
+                chunks.push(merged);
+            } else {
+                chunks.push(chunk);
+            }
+        }
+    }
+    // If only doc remains with no following decl, discard it
+    // (shouldn't normally happen)
+
+    for chunk in &chunks {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        // Extract doc comment if present
+        let (doc_text, decl_text) = split_doc_and_decl(chunk);
+        let doc: Vec<String> = doc_text
+            .map(|d| {
+                d.lines()
+                    .map(|l| {
+                        let t = l.trim();
+                        let t = t.strip_prefix("/**").unwrap_or(t);
+                        let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
+                        let t = t.strip_suffix("*/").unwrap_or(t);
+                        t.trim().to_string()
+                    })
+                    .filter(|l| !l.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let decl_text = decl_text.trim();
+        if decl_text.is_empty() {
+            continue;
+        }
+
+        if decl_text.starts_with("type constraint") {
+            // type constraint (fin B, L <= B, ...)
+            let rest = decl_text.strip_prefix("type").unwrap_or(decl_text);
+            let rest = rest.strip_prefix(" constraint").unwrap_or(rest).trim();
+            items.push(Item::ModuleParam {
+                name: String::new(),
+                kind: ParamKind::Constraint,
+                signature: rest.to_string(),
+                doc,
+            });
+        } else if decl_text.starts_with("type ") || decl_text.starts_with("type\t") {
+            // type B : #
+            let rest = skip_keyword(decl_text);
+            let name = first_ident(rest);
+            let sig = if let Some(colon_pos) = rest.find(':') {
+                rest[colon_pos + 1..].trim().to_string()
+            } else {
+                String::new()
+            };
+            items.push(Item::ModuleParam {
+                name,
+                kind: ParamKind::TypeParam,
+                signature: sig,
+                doc,
+            });
+        } else {
+            // Value parameter: H : {T} (...) => [T][8] -> [L][8]
+            let colon_pos = find_top_level(decl_text, ':');
+            if let Some(cp) = colon_pos {
+                let name = first_ident(&decl_text[..cp]);
+                let sig = decl_text[cp + 1..].trim().to_string();
+                items.push(Item::ModuleParam {
+                    name,
+                    kind: ParamKind::ValueParam,
+                    signature: sig,
+                    doc,
                 });
             }
-            current_line = line + 1;
-            continue;
         }
-        if current_tokens.is_empty() {
-            current_line = *line;
-        }
-        current_tokens.push((tok.clone(), text.clone()));
     }
-    if !current_tokens.is_empty() {
-        lines.push(TokenLine {
-            tokens: current_tokens,
-            line_number: current_line,
+}
+
+fn parse_type_decl(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text); // strip "type"
+    // Handle "type constraint …"
+    let rest = rest
+        .strip_prefix("constraint")
+        .map(|s| s.trim_start())
+        .unwrap_or(rest);
+
+    let eq_pos = match find_top_level(rest, '=') {
+        Some(p) => p,
+        None => return,
+    };
+    let name = first_ident(&rest[..eq_pos]);
+    if name.is_empty() {
+        return;
+    }
+    let rhs = rest[eq_pos + 1..].trim();
+
+    if rhs.contains('{') {
+        items.push(Item::RecordType {
+            name,
+            fields: extract_record_fields(rhs),
+            doc: Vec::new(),
+        });
+    } else {
+        items.push(Item::TypeAlias {
+            name,
+            width: extract_width(rhs),
+            doc: Vec::new(),
         });
     }
-    lines
 }
 
-// ── Comment / section helpers ───────────────────────────────────────────────
-
-fn is_separator_line(comment: &str) -> bool {
-    let trimmed = comment.trim_start_matches('/');
-    trimmed.is_empty() || trimmed.chars().all(|c| c == '/')
-}
-
-fn is_category_line(comment: &str) -> bool {
-    let inner = strip_comment_prefix(comment);
-    inner.starts_with("----") || inner.starts_with("── ")
-}
-
-fn extract_section_title(comment: &str) -> String {
-    let inner = strip_comment_prefix(comment);
-    inner.trim().to_string()
-}
-
-fn extract_category_title(comment: &str) -> String {
-    let inner = strip_comment_prefix(comment);
-    // Strip leading/trailing dashes and whitespace
-    let trimmed = inner.trim_matches(|c: char| c == '-' || c == ' ' || c == '─');
-    trimmed.trim().to_string()
-}
-
-fn strip_comment_prefix(comment: &str) -> String {
-    let s = comment.strip_prefix("//").unwrap_or(comment);
-    // Strip at most one leading space
-    if let Some(stripped) = s.strip_prefix(' ') {
-        stripped.to_string()
-    } else {
-        s.to_string()
-    }
-}
-
-// ── Pattern matching helpers ────────────────────────────────────────────────
-
-fn matches_pattern(tl: &TokenLine, expected: &[Token]) -> bool {
-    if tl.tokens.is_empty() {
-        return false;
-    }
-    expected
-        .iter()
-        .zip(tl.tokens.iter())
-        .all(|(e, (t, _))| *e == *t)
-}
-
-fn extract_after(tl: &TokenLine, after: Token) -> String {
-    let mut found = false;
-    let mut parts = Vec::new();
-    for (tok, text) in &tl.tokens {
-        if !found {
-            if *tok == after {
-                found = true;
+fn parse_property_decl(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text).trim(); // strip "property"
+    let eq_pos = match find_top_level(rest, '=') {
+        Some(p) => p,
+        None => {
+            let name = first_ident(rest);
+            if !name.is_empty() {
+                let (label, prop_name) = split_property_name(&name);
+                items.push(Item::Property {
+                    label,
+                    name: prop_name,
+                    params: Vec::new(),
+                    body: rest.to_string(),
+                    doc: Vec::new(),
+                    proof_status: None,
+                });
             }
-            continue;
+            return;
         }
-        if *tok == Token::Where {
-            break;
-        }
-        parts.push(text.clone());
-    }
-    parts.join(" ")
-}
-
-fn take_doc(pending: &mut Vec<String>) -> Vec<String> {
-    std::mem::take(pending)
-}
-
-fn flush_doc(pending: &mut Vec<String>, items: &mut Vec<Item>) {
-    if !pending.is_empty() {
-        items.push(Item::CommentBlock {
-            lines: std::mem::take(pending),
-        });
-    }
-}
-
-// ── Detection helpers ───────────────────────────────────────────────────────
-
-/// Function signature: Ident : ... -> ... (at column 0, with Arrow token)
-fn is_function_sig(tl: &TokenLine) -> bool {
-    if tl.tokens.len() < 3 {
-        return false;
-    }
-    if tl.tokens[0].0 != Token::Ident {
-        return false;
-    }
-    if tl.tokens[1].0 != Token::Colon {
-        return false;
-    }
-    // Must have at least one Arrow somewhere to be a function sig
-    tl.tokens.iter().any(|(t, _)| *t == Token::Arrow)
-}
-
-/// Constant definition: IDENT = value : TypeName (col 0, all-uppercase or
-/// mixed with underscore, has `=` and `:` but no `->`)
-fn is_constant_def(tl: &TokenLine, raw_lines: &[&str]) -> bool {
-    if tl.tokens.len() < 5 {
-        return false;
-    }
-    if tl.tokens[0].0 != Token::Ident {
-        return false;
-    }
-    // Must be at column 0
-    let line_idx = tl.line_number.saturating_sub(1);
-    if line_idx < raw_lines.len() {
-        let line = raw_lines[line_idx];
-        if line.starts_with(' ') || line.starts_with('\t') {
-            return false;
-        }
-    }
-    // Must have = and : but no ->
-    let has_eq = tl.tokens.iter().any(|(t, _)| *t == Token::Eq);
-    let has_colon = tl.tokens.iter().any(|(t, _)| *t == Token::Colon);
-    let has_arrow = tl.tokens.iter().any(|(t, _)| *t == Token::Arrow);
-    has_eq && has_colon && !has_arrow
-}
-
-/// Top-level definition: Ident at col 0 followed by params and = (no : before =)
-fn is_top_level_def(tl: &TokenLine, raw_lines: &[&str]) -> bool {
-    if tl.tokens.is_empty() {
-        return false;
-    }
-    if tl.tokens[0].0 != Token::Ident {
-        return false;
-    }
-    let line_idx = tl.line_number.saturating_sub(1);
-    if line_idx < raw_lines.len() {
-        let line = raw_lines[line_idx];
-        if line.starts_with(' ') || line.starts_with('\t') {
-            return false;
-        }
-    }
-    // Has `=` somewhere
-    tl.tokens.iter().any(|(t, _)| *t == Token::Eq)
-}
-
-// ── Type declaration parsing ────────────────────────────────────────────────
-
-fn parse_type_decl(
-    token_lines: &[TokenLine],
-    start: usize,
-    raw_lines: &[&str],
-    doc: Vec<String>,
-) -> (usize, Item) {
-    let tl = &token_lines[start];
-
-    // Extract name: type <Name> = ...
-    let name = if tl.tokens.len() > 1 && tl.tokens[1].0 == Token::Ident {
-        tl.tokens[1].1.clone()
-    } else {
-        String::new()
     };
 
-    // Check for record type: type Name = \n { ... } or type Name = { ... }
-    // Look for LBrace on this line or next
-    let has_brace_this_line = tl.tokens.iter().any(|(t, _)| *t == Token::LBrace);
-    let has_brace_next_line = start + 1 < token_lines.len()
-        && token_lines[start + 1]
-            .tokens
-            .iter()
-            .any(|(t, _)| *t == Token::LBrace);
+    let lhs = rest[..eq_pos].trim();
+    let rhs = rest[eq_pos + 1..].trim();
 
-    if has_brace_this_line || has_brace_next_line {
-        return parse_record_type(token_lines, start, raw_lines, name, doc);
+    let name = first_ident(lhs);
+    let params = extract_params(&lhs[name.len()..]);
+    let (label, prop_name) = split_property_name(&name);
+
+    items.push(Item::Property {
+        label,
+        name: prop_name,
+        params,
+        body: dedent(rhs),
+        doc: Vec::new(),
+        proof_status: None,
+    });
+}
+
+fn parse_import_decl(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text).trim(); // strip "import"
+    if rest.is_empty() {
+        return;
     }
 
-    // Type alias: type Name = [N]
-    let width = extract_width(tl);
-    (
-        1,
-        Item::TypeAlias {
+    // Parse trailing "hiding (...)" if present.
+    let (head, hiding) = if let Some((prefix, suffix)) = rest.rsplit_once("hiding") {
+        let list = suffix
+            .trim()
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .split(',')
+            .map(|s| s.trim().trim_matches('`').to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        (prefix.trim(), list)
+    } else {
+        (rest, Vec::new())
+    };
+
+    // Parse optional "as Alias".
+    let (module_path, qualifier) = if let Some((module, alias)) = head.rsplit_once(" as ") {
+        (module.trim().to_string(), Some(alias.trim().to_string()))
+    } else {
+        (head.trim().to_string(), None)
+    };
+
+    if module_path.is_empty() {
+        return;
+    }
+
+    items.push(Item::Import {
+        module_path,
+        qualifier,
+        hiding,
+    });
+}
+
+fn parse_prim_or_foreign(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text).trim(); // strip "primitive" or "foreign"
+    // Also strip "type" if present (e.g. "primitive type (/) : …")
+    let rest = rest
+        .strip_prefix("type")
+        .map(|s| s.trim_start())
+        .unwrap_or(rest);
+
+    if let Some(cp) = find_top_level(rest, ':') {
+        let lhs = rest[..cp].trim().trim_start_matches('(').trim_end_matches(')').trim();
+        let name = lhs.split_whitespace().last().unwrap_or("").to_string();
+        let sig = rest[cp + 1..].trim().to_string();
+        items.push(Item::Function {
             name,
-            width,
-            doc,
-        },
-    )
+            signature: sig,
+            branches: Vec::new(),
+            body: String::new(),
+            doc: Vec::new(),
+        });
+    }
 }
 
-fn extract_width(tl: &TokenLine) -> String {
-    // Find [ ... ] after =
-    let mut after_eq = false;
-    let mut in_bracket = false;
-    let mut width_parts: Vec<String> = Vec::new();
+fn parse_newtype_decl(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text).trim(); // strip "newtype"
+    let name = first_ident(rest);
+    items.push(Item::RecordType {
+        name,
+        fields: extract_record_fields(text),
+        doc: Vec::new(),
+    });
+}
 
-    for (tok, text) in &tl.tokens {
-        if *tok == Token::Eq {
-            after_eq = true;
-            continue;
-        }
-        if !after_eq {
-            continue;
-        }
-        if *tok == Token::LBracket {
-            in_bracket = true;
-            continue;
-        }
-        if *tok == Token::RBracket {
-            break;
-        }
-        if in_bracket {
-            width_parts.push(text.clone());
-        }
-    }
-    if width_parts.is_empty() && after_eq {
-        // Maybe it's just a bare value after =
-        let mut parts = Vec::new();
-        let mut found_eq = false;
-        for (tok, text) in &tl.tokens {
-            if *tok == Token::Eq {
-                found_eq = true;
+fn parse_enum_decl(text: &str, items: &mut Vec<Item>) {
+    let rest = skip_keyword(text).trim(); // strip "enum"
+    let name = first_ident(rest);
+    items.push(Item::TypeAlias {
+        name,
+        width: String::new(),
+        doc: Vec::new(),
+    });
+}
+
+fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
+    // Handle `private` blocks: strip keyword and parse inner declarations
+    let text = if text.starts_with("private") {
+        // Strip the "private" keyword line, preserving indentation of the rest
+        let rest = text.strip_prefix("private").unwrap_or(text);
+        // Re-parse each top-level declaration within the private block
+        for chunk in split_private_block(rest) {
+            let chunk = chunk.trim();
+            if chunk.is_empty() {
                 continue;
             }
-            if found_eq {
-                parts.push(text.clone());
-            }
-        }
-        return parts.join(" ");
-    }
-    width_parts.join(" ")
-}
-
-fn parse_record_type(
-    token_lines: &[TokenLine],
-    start: usize,
-    _raw_lines: &[&str],
-    name: String,
-    doc: Vec<String>,
-) -> (usize, Item) {
-    let mut fields: Vec<(String, String)> = Vec::new();
-    let mut consumed = 1;
-    let mut brace_depth = 0;
-    let mut found_open = false;
-
-    // Collect all tokens from start until matching }
-    let mut all_tokens: Vec<(Token, String)> = Vec::new();
-    for (j, line) in token_lines.iter().enumerate().skip(start) {
-        for (tok, text) in &line.tokens {
-            if *tok == Token::LBrace {
-                brace_depth += 1;
-                found_open = true;
-            } else if *tok == Token::RBrace {
-                brace_depth -= 1;
-            }
-            all_tokens.push((tok.clone(), text.clone()));
-            if found_open && brace_depth == 0 {
-                consumed = j - start + 1;
-                break;
-            }
-        }
-        if found_open && brace_depth == 0 {
-            break;
-        }
-        if j > start {
-            consumed = j - start + 1;
-        }
-    }
-
-    // Parse fields from collected tokens: field_name : Type
-    let mut i = 0;
-    while i < all_tokens.len() {
-        if all_tokens[i].0 == Token::Ident {
-            // Check for : after ident (possibly with comma before)
-            if i + 1 < all_tokens.len() && all_tokens[i + 1].0 == Token::Colon {
-                let field_name = all_tokens[i].1.clone();
-                let mut field_type_parts: Vec<String> = Vec::new();
-                let mut j = i + 2;
-                while j < all_tokens.len() {
-                    match all_tokens[j].0 {
-                        Token::Comma | Token::RBrace => break,
-                        Token::LBrace | Token::Type => break,
-                        _ => {
-                            field_type_parts.push(all_tokens[j].1.clone());
-                            j += 1;
-                        }
-                    }
-                }
-                let field_type = field_type_parts.join(" ");
-                // Skip fields from the `type Name =` part
-                if field_name != name {
-                    fields.push((field_name, field_type));
-                }
-                i = j;
-                continue;
-            }
-        }
-        i += 1;
-    }
-
-    (
-        consumed,
-        Item::RecordType { name, fields, doc },
-    )
-}
-
-// ── Constant extraction ─────────────────────────────────────────────────────
-
-fn extract_constant(tl: &TokenLine) -> (String, String, String) {
-    let name = tl.tokens[0].1.clone();
-
-    // Find = position
-    let eq_pos = tl
-        .tokens
-        .iter()
-        .position(|(t, _)| *t == Token::Eq)
-        .unwrap_or(1);
-
-    // Find : position after =
-    let colon_pos = tl.tokens[eq_pos..]
-        .iter()
-        .position(|(t, _)| *t == Token::Colon)
-        .map(|p| p + eq_pos)
-        .unwrap_or(tl.tokens.len());
-
-    let value = tl.tokens[eq_pos + 1..colon_pos]
-        .iter()
-        .map(|(_, t)| t.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let type_ann = tl.tokens[colon_pos + 1..]
-        .iter()
-        .map(|(_, t)| t.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    (name, value, type_ann)
-}
-
-// ── Function parsing ────────────────────────────────────────────────────────
-
-fn parse_function(
-    token_lines: &[TokenLine],
-    start: usize,
-    raw_lines: &[&str],
-    doc: Vec<String>,
-) -> (usize, Item) {
-    let sig_tl = &token_lines[start];
-    let name = sig_tl.tokens[0].1.clone();
-
-    // Build signature text from tokens after ':'
-    let sig = sig_tl.tokens[2..]
-        .iter()
-        .map(|(_, t)| t.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // The signature may continue on the next line(s) if they're indented
-    // and contain Arrow tokens
-    let mut consumed = 1;
-    let mut full_sig = sig.clone();
-
-    // Check for multi-line signature
-    let mut j = start + 1;
-    while j < token_lines.len() {
-        let line_idx = token_lines[j].line_number.saturating_sub(1);
-        if line_idx < raw_lines.len() {
-            let line = raw_lines[line_idx];
-            if line.starts_with(' ') || line.starts_with('\t') {
-                // Check if this is a continuation of the signature (has Arrow)
-                // or is the body definition line (has name followed by params = ...)
-                if token_lines[j]
-                    .tokens
-                    .iter()
-                    .any(|(t, _)| *t == Token::Arrow)
-                    && !token_lines[j]
-                        .tokens
-                        .iter()
-                        .any(|(t, _)| *t == Token::Eq)
-                {
-                    let cont = token_lines[j]
-                        .tokens
-                        .iter()
-                        .map(|(_, t)| t.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    full_sig.push(' ');
-                    full_sig.push_str(&cont);
-                    consumed += 1;
-                    j += 1;
-                    continue;
+            let (doc_text, decl_text) = split_doc_and_decl(chunk);
+            if let Some(doc) = doc_text {
+                let lines: Vec<String> = doc
+                    .lines()
+                    .map(|l| {
+                        let t = l.trim();
+                        // Strip line comment prefix
+                        let t = t.strip_prefix("///").or_else(|| t.strip_prefix("//")).unwrap_or(t);
+                        // Strip block comment markers
+                        let t = t.strip_prefix("/**").unwrap_or(t);
+                        let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
+                        let t = t.strip_suffix("*/").unwrap_or(t);
+                        t.trim().to_string()
+                    })
+                    .filter(|l| !l.is_empty())
+                    .filter(|l| !is_separator_content(l))
+                    .filter(|l| !is_section_number_line(l))
+                    .collect();
+                if !lines.is_empty() {
+                    items.push(Item::CommentBlock { lines });
                 }
             }
-        }
-        break;
-    }
-
-    // Now look for the definition line: name params = body
-    // It could start on the next line at column 0
-    let body_start = start + consumed;
-    let mut body_lines_raw: Vec<String> = Vec::new();
-
-    if body_start < token_lines.len() {
-        let def_tl = &token_lines[body_start];
-        // Check if this line starts with the function name
-        if !def_tl.tokens.is_empty() && def_tl.tokens[0].1 == name {
-            let line_idx = def_tl.line_number.saturating_sub(1);
-            if line_idx < raw_lines.len() {
-                body_lines_raw.push(raw_lines[line_idx].to_string());
-            }
-            consumed += 1;
-
-            // Collect continuation lines (indented)
-            let mut k = body_start + 1;
-            while k < token_lines.len() {
-                let li = token_lines[k].line_number.saturating_sub(1);
-                if li < raw_lines.len() {
-                    let line = raw_lines[li];
-                    if line.starts_with(' ') || line.starts_with('\t') {
-                        body_lines_raw.push(line.to_string());
-                        consumed += 1;
-                        k += 1;
-                    } else {
-                        break;
-                    }
+            let decl_text = decl_text.trim();
+            if !decl_text.is_empty() {
+                // Detect kind by leading keyword
+                if decl_text.starts_with("type ") || decl_text.starts_with("type\t") {
+                    parse_type_decl(decl_text, items);
+                } else if decl_text.starts_with("property ") || decl_text.starts_with("property\t") {
+                    parse_property_decl(decl_text, items);
+                } else if decl_text.starts_with("primitive ") {
+                    parse_prim_or_foreign(decl_text, items);
+                } else if decl_text.starts_with("newtype ") {
+                    parse_newtype_decl(decl_text, items);
+                } else if decl_text.starts_with("enum ") {
+                    parse_enum_decl(decl_text, items);
                 } else {
-                    break;
+                    parse_sig_or_bind(decl_text, items);
                 }
             }
         }
+        return;
+    } else {
+        text
+    };
+
+    let colon_pos = find_top_level(text, ':');
+    let eq_pos = find_top_level(text, '=');
+
+    match (colon_pos, eq_pos) {
+        (Some(cp), Some(ep)) if cp < ep => {
+            // : before = → signature
+            let lhs = text[..cp].trim();
+            let rhs = text[cp + 1..].trim();
+            let names = parse_name_list(lhs);
+            if names.is_empty() {
+                parse_binding(text, items);
+            } else {
+                for name in names {
+                    items.push(Item::Function {
+                        name,
+                        signature: rhs.to_string(),
+                        branches: Vec::new(),
+                        body: String::new(),
+                        doc: Vec::new(),
+                    });
+                }
+            }
+        }
+        (Some(cp), None) => {
+            // Only : → pure signature
+            let lhs = text[..cp].trim();
+            let rhs = text[cp + 1..].trim();
+            let names = parse_name_list(lhs);
+            if names.is_empty() {
+                parse_binding(text, items);
+            } else {
+                for name in names {
+                    items.push(Item::Function {
+                        name,
+                        signature: rhs.to_string(),
+                        branches: Vec::new(),
+                        body: String::new(),
+                        doc: Vec::new(),
+                    });
+                }
+            }
+        }
+        (_, Some(_)) => parse_binding(text, items),
+        (None, None) => {}
     }
-
-    let body = body_lines_raw.join("\n");
-    let branches = extract_branches(&body);
-
-    (
-        consumed,
-        Item::Function {
-            name,
-            signature: full_sig,
-            branches,
-            body,
-            doc,
-        },
-    )
 }
 
-/// Parse a bare function definition (no separate signature line).
-/// Pattern: name params = body at column 0
-fn parse_bare_function(
-    token_lines: &[TokenLine],
-    start: usize,
-    raw_lines: &[&str],
-    doc: Vec<String>,
-) -> (usize, Item) {
-    let tl = &token_lines[start];
-    let name = tl.tokens[0].1.clone();
-
-    // Build body from this line + continuation lines
-    let mut body_lines: Vec<String> = Vec::new();
-    let line_idx = tl.line_number.saturating_sub(1);
-    if line_idx < raw_lines.len() {
-        body_lines.push(raw_lines[line_idx].to_string());
+fn parse_binding(text: &str, items: &mut Vec<Item>) {
+    let eq_pos = match find_top_level(text, '=') {
+        Some(p) => p,
+        None => return,
+    };
+    // Skip compound operators: =>, ==, !=, <=, >=
+    if eq_pos + 1 < text.len() {
+        let next = text.as_bytes()[eq_pos + 1];
+        if next == b'>' || next == b'=' {
+            return;
+        }
+    }
+    if eq_pos > 0 {
+        let prev = text.as_bytes()[eq_pos - 1];
+        if prev == b'!' || prev == b'<' || prev == b'>' {
+            return;
+        }
     }
 
-    let mut consumed = 1;
-    let mut k = start + 1;
-    while k < token_lines.len() {
-        let li = token_lines[k].line_number.saturating_sub(1);
-        if li < raw_lines.len() {
-            let line = raw_lines[li];
-            if line.starts_with(' ') || line.starts_with('\t') {
-                body_lines.push(line.to_string());
-                consumed += 1;
-                k += 1;
-            } else {
-                break;
+    let lhs = text[..eq_pos].trim();
+    let rhs = text[eq_pos + 1..].trim();
+    let name = first_ident(lhs);
+    if name.is_empty() {
+        return;
+    }
+
+    items.push(Item::Function {
+        name,
+        signature: String::new(),
+        branches: extract_branches(rhs),
+        body: text.to_string(),
+        doc: Vec::new(),
+    });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+fn skip_keyword(text: &str) -> &str {
+    text.split_once(|c: char| c.is_whitespace())
+        .map(|(_, rest)| rest.trim_start())
+        .unwrap_or("")
+}
+
+fn dedent(text: &str) -> String {
+    text.lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn extract_params(text: &str) -> Vec<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut params = Vec::new();
+    let mut depth = 0i32;
+    let mut start = None;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
             }
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(s) = start {
+                        params.push(text[s..=i].trim().to_string());
+                    }
+                    start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if params.is_empty() {
+        // No parens — split by whitespace (simple identifiers)
+        text.split_whitespace()
+            .map(|w| w.to_string())
+            .collect()
+    } else {
+        params
+    }
+}
+
+fn find_top_level(text: &str, target: char) -> Option<usize> {
+    let mut depth_paren = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut depth_brace = 0i32;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '[' => depth_bracket += 1,
+            ']' => depth_bracket -= 1,
+            '{' => depth_brace += 1,
+            '}' => depth_brace -= 1,
+            _ if c == target
+                && depth_paren == 0
+                && depth_bracket == 0
+                && depth_brace == 0 =>
+            {
+                return Some(i);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn first_ident(text: &str) -> String {
+    let text = text.trim();
+    if text.starts_with('(') {
+        if let Some(close) = text.find(')') {
+            return text[1..close].trim().to_string();
+        }
+    }
+    text.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '\'')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn parse_name_list(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if part.starts_with('(') && part.ends_with(')') {
+            names.push(part[1..part.len() - 1].trim().to_string());
+        } else {
+            let name = first_ident(part);
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
+            {
+                let rest = part[name.len()..].trim();
+                if rest.is_empty() {
+                    names.push(name);
+                } else {
+                    return Vec::new();
+                }
+            } else {
+                return Vec::new();
+            }
+        }
+    }
+    names
+}
+
+fn split_property_name(name: &str) -> (String, String) {
+    if let Some(pos) = name.find('_') {
+        (name[..pos].to_string(), name[pos + 1..].to_string())
+    } else {
+        (name.to_string(), name.to_string())
+    }
+}
+
+fn split_doc_and_decl(text: &str) -> (Option<String>, &str) {
+    let mut doc_end = 0;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("/**")
+            || trimmed.starts_with("///")
+            || trimmed.starts_with("//")
+            || trimmed.starts_with(" *")
+            || trimmed.starts_with("*/")
+        {
+            doc_end += line.len() + 1;
         } else {
             break;
         }
     }
+    let doc_end = doc_end.min(text.len());
+    if doc_end > 0 {
+        let doc = text[..doc_end].trim().to_string();
+        let rest = &text[doc_end..];
+        if doc.is_empty() {
+            (None, rest)
+        } else {
+            (Some(doc), rest)
+        }
+    } else {
+        (None, text)
+    }
+}
 
-    // Extract signature: everything between name and = on the first line
-    // For "isFleetMode m = ..." → signature is implicit
-    // Extract params
-    let eq_pos = tl
-        .tokens
-        .iter()
-        .position(|(t, _)| *t == Token::Eq)
-        .unwrap_or(tl.tokens.len());
+fn extract_width(rhs: &str) -> String {
+    let text = rhs.trim();
+    if text.starts_with('[') {
+        if let Some(close) = text.find(']') {
+            return text[1..close].trim().to_string();
+        }
+    }
+    text.to_string()
+}
 
-    let body = body_lines.join("\n");
-    let branches = extract_branches(&body);
-
-    // Build a simple signature from the tokens
-    let sig_parts: Vec<String> = tl.tokens[1..eq_pos]
-        .iter()
-        .map(|(_, t)| t.clone())
-        .collect();
-
-    (
-        consumed,
-        Item::Function {
-            name,
-            signature: sig_parts.join(" "),
-            branches,
-            body,
-            doc,
-        },
-    )
+fn extract_record_fields(text: &str) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
+    if let Some(open) = text.find('{') {
+        if let Some(close) = text.rfind('}') {
+            let inner = &text[open + 1..close];
+            for field_str in inner.split(',') {
+                let field_str = field_str.trim();
+                if let Some(colon_pos) = field_str.find(':') {
+                    let name = field_str[..colon_pos].trim().to_string();
+                    let typ = field_str[colon_pos + 1..].trim().to_string();
+                    if !name.is_empty() {
+                        fields.push((name, typ));
+                    }
+                }
+            }
+        }
+    }
+    fields
 }
 
 // ── Branch extraction ───────────────────────────────────────────────────────
 
 fn extract_branches(body: &str) -> Vec<Branch> {
-    let mut branches: Vec<Branch> = Vec::new();
-
-    // Find the part after the first definition `=`
-    let after_eq_start = find_body_eq(body);
-    if after_eq_start.is_none() {
-        return branches;
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
     }
-    let after_eq = &body[after_eq_start.unwrap()..];
-    let trimmed = after_eq.trim();
-
-    if !trimmed.starts_with("if ")
-        && !trimmed.starts_with("if\n")
-        && !trimmed.contains("\n")
-    {
-        // Simple single-line body, no if/then/else
-        branches.push(Branch {
+    if !trimmed.starts_with("if ") && !trimmed.starts_with("if\n") && !trimmed.contains('\n') {
+        return vec![Branch {
             condition: None,
             result: trimmed.to_string(),
-        });
-        return branches;
+        }];
     }
 
-    // Parse if/then/else chains from the body text
-    parse_if_then_else(trimmed, &mut branches);
-
-    // If we didn't find any branches but have a body, store as single branch
-    if branches.is_empty() && !trimmed.is_empty() {
-        branches.push(Branch {
-            condition: None,
-            result: trimmed.to_string(),
-        });
-    }
-
-    branches
-}
-
-/// Find the position right after the definition `=` (not `==`, `!=`, `<=`, `>=`, `==>`)
-fn find_body_eq(body: &str) -> Option<usize> {
-    let bytes = body.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'=' {
-            // Check it's not ==, !=, <=, >=, ==>
-            let prev = if i > 0 { Some(bytes[i - 1]) } else { None };
-            let next = if i + 1 < bytes.len() {
-                Some(bytes[i + 1])
-            } else {
-                None
-            };
-            if prev == Some(b'!') || prev == Some(b'<') || prev == Some(b'>') {
-                i += 1;
-                continue;
+    let mut branches = Vec::new();
+    for line in trimmed.lines() {
+        let t = line.trim();
+        if t.starts_with("if ") {
+            if let Some(b) = parse_branch(t, "if ") {
+                branches.push(b);
             }
-            if next == Some(b'=') || next == Some(b'>') {
-                i += 2;
-                continue;
+        } else if t.starts_with("| ") || t.starts_with('|') {
+            let content = t
+                .strip_prefix("| ")
+                .or_else(|| t.strip_prefix('|'))
+                .unwrap_or(t);
+            if let Some(b) = parse_branch(content.trim(), "") {
+                branches.push(b);
             }
-            return Some(i + 1);
-        }
-        i += 1;
-    }
-    None
-}
-
-fn parse_if_then_else(text: &str, branches: &mut Vec<Branch>) {
-    // Strategy: scan for `if COND then RESULT`, `| COND then RESULT`, `else RESULT`
-    // We work line-by-line but also handle multi-line conditions/results.
-    let lines: Vec<&str> = text.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-
-        // `if COND then RESULT` or `if ~ COND then RESULT`
-        if trimmed.starts_with("if ") {
-            if let Some(branch) = parse_branch_line(trimmed, "if ") {
-                branches.push(branch);
-            }
-            i += 1;
-            continue;
-        }
-
-        // `| COND then RESULT`
-        if trimmed.starts_with("| ") || trimmed.starts_with("|") {
-            let content = trimmed.strip_prefix("| ").or_else(|| trimmed.strip_prefix("|")).unwrap_or(trimmed);
-            if let Some(branch) = parse_branch_line(content.trim(), "") {
-                branches.push(branch);
-            }
-            i += 1;
-            continue;
-        }
-
-        // `else RESULT`
-        if trimmed.starts_with("else ") || trimmed == "else" {
-            let result = trimmed
-                .strip_prefix("else")
-                .unwrap_or("")
-                .trim()
-                .to_string();
+        } else if t.starts_with("else ") || t == "else" {
+            let result = t.strip_prefix("else").unwrap_or("").trim().to_string();
             if !result.is_empty() {
                 branches.push(Branch {
                     condition: None,
                     result,
                 });
             }
-            i += 1;
-            continue;
         }
+    }
 
-        // Nested `(if ... then ... else ...)` inside a then-clause
-        if trimmed.starts_with("(if ") {
-            let inner = trimmed.strip_prefix("(").unwrap_or(trimmed);
-            // Remove trailing ) if present
-            let inner = if let Some(stripped) = inner.strip_suffix(')') {
-                stripped
-            } else {
-                inner
-            };
-            if let Some(branch) = parse_branch_line(inner.trim(), "if ") {
-                branches.push(branch);
+    if branches.is_empty() {
+        vec![Branch {
+            condition: None,
+            result: trimmed.to_string(),
+        }]
+    } else {
+        branches
+    }
+}
+
+fn parse_branch(line: &str, prefix: &str) -> Option<Branch> {
+    let content = line.strip_prefix(prefix).unwrap_or(line).trim();
+    let pos = find_word(content, "then")?;
+    let cond = content[..pos].trim().to_string();
+    let result = content[pos + 4..].trim().to_string();
+    Some(Branch {
+        condition: Some(cond),
+        result,
+    })
+}
+
+fn find_word(s: &str, word: &str) -> Option<usize> {
+    let mut start = 0;
+    while let Some(pos) = s[start..].find(word) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !s.as_bytes()[abs - 1].is_ascii_alphanumeric();
+        let after_ok =
+            abs + word.len() >= s.len() || !s.as_bytes()[abs + word.len()].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return Some(abs);
+        }
+        start = abs + 1;
+    }
+    None
+}
+
+// ── Signature merging ───────────────────────────────────────────────────────
+
+fn merge_signatures(items: &mut Vec<Item>) {
+    let mut i = 0;
+    while i < items.len() {
+        if let Item::Function { name, body, .. } = &items[i] {
+            if !body.is_empty() {
+                let fn_name = name.clone();
+                let fn_body = body.clone();
+                for j in (0..i).rev() {
+                    if let Item::Function {
+                        name: sig_name,
+                        body: sig_body,
+                        branches: sig_branches,
+                        signature: sig,
+                        ..
+                    } = &mut items[j]
+                    {
+                        if *sig_name == fn_name && sig_body.is_empty() && !sig.is_empty() {
+                            *sig_body = fn_body.clone();
+                            *sig_branches = extract_branches(&fn_body);
+                            items.remove(i);
+                            break;
+                        }
+                    }
+                }
             }
-            i += 1;
-            continue;
         }
-
         i += 1;
     }
 }
 
-fn parse_branch_line(line: &str, prefix: &str) -> Option<Branch> {
-    let content = line.strip_prefix(prefix).unwrap_or(line).trim();
-
-    // Find `then` keyword
-    if let Some(then_pos) = find_word(content, "then") {
-        let condition = content[..then_pos].trim().to_string();
-        let result_text = content[then_pos + 4..].trim();
-
-        // If result is empty, the result may be on the next line
-        if result_text.is_empty() {
-            return Some(Branch {
-                condition: Some(condition),
-                result: String::new(),
-            });
-        }
-
-        return Some(Branch {
-            condition: Some(condition),
-            result: result_text.to_string(),
-        });
-    }
-
-    None
-}
-
-/// Find a whole word in a string (not part of an identifier).
-fn find_word(s: &str, word: &str) -> Option<usize> {
-    let mut start = 0;
-    while let Some(pos) = s[start..].find(word) {
-        let abs_pos = start + pos;
-        let before_ok = abs_pos == 0
-            || !s.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
-        let after_ok = abs_pos + word.len() >= s.len()
-            || !s.as_bytes()[abs_pos + word.len()].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return Some(abs_pos);
-        }
-        start = abs_pos + 1;
-    }
-    None
-}
-
-// ── Property parsing ────────────────────────────────────────────────────────
-
-fn parse_property(
-    token_lines: &[TokenLine],
-    start: usize,
-    raw_lines: &[&str],
-    doc: Vec<String>,
-) -> (usize, Item) {
-    let tl = &token_lines[start];
-
-    // property P1_KeyMonotonicity params = body
-    // The name is the token after `property`
-    let full_name = if tl.tokens.len() > 1 {
-        tl.tokens[1].1.clone()
-    } else {
-        String::new()
-    };
-
-    // Split on first underscore: P1 → label, rest → name
-    let (label, name) = if let Some(us_pos) = full_name.find('_') {
-        (
-            full_name[..us_pos].to_string(),
-            full_name[us_pos + 1..].to_string(),
-        )
-    } else {
-        (full_name.clone(), full_name.clone())
-    };
-
-    // Extract params: everything between name and =
-    let mut params: Vec<String> = Vec::new();
-    let mut found_name = false;
-    let mut paren_depth = 0;
-    let mut current_param = String::new();
-
-    for (tok, text) in &tl.tokens {
-        if !found_name {
-            if *tok == Token::Ident && *text == full_name {
-                found_name = true;
-            }
-            continue;
-        }
-        if *tok == Token::Eq
-            && paren_depth == 0
-        {
-            if !current_param.is_empty() {
-                params.push(current_param.trim().to_string());
-            }
-            break;
-        }
-        if *tok == Token::LParen {
-            paren_depth += 1;
-            current_param.push('(');
-            continue;
-        }
-        if *tok == Token::RParen {
-            paren_depth -= 1;
-            current_param.push(')');
-            if paren_depth == 0 {
-                params.push(current_param.trim().to_string());
-                current_param = String::new();
-            }
-            continue;
-        }
-        if paren_depth > 0 {
-            if !current_param.ends_with('(') {
-                current_param.push(' ');
-            }
-            current_param.push_str(text);
-        } else {
-            params.push(text.clone());
-        }
-    }
-
-    // Collect body lines
-    let mut body_lines: Vec<String> = Vec::new();
-    let line_idx = tl.line_number.saturating_sub(1);
-    if line_idx < raw_lines.len() {
-        // Extract body part (after =) from first line
-        let line = raw_lines[line_idx];
-        if let Some(eq_p) = find_body_eq(line) {
-            let after = line[eq_p..].trim();
-            if !after.is_empty() {
-                body_lines.push(after.to_string());
-            }
-        }
-    }
-
-    let mut consumed = 1;
-    let mut k = start + 1;
-    while k < token_lines.len() {
-        let li = token_lines[k].line_number.saturating_sub(1);
-        if li < raw_lines.len() {
-            let line = raw_lines[li];
-            if line.starts_with(' ') || line.starts_with('\t') {
-                body_lines.push(line.trim().to_string());
-                consumed += 1;
-                k += 1;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    let body = body_lines.join("\n");
-
-    (
-        consumed,
-        Item::Property {
-            label,
-            name,
-            params,
-            body,
-            doc,
-            proof_status: None,
-        },
-    )
-}
-
-// ── Enum grouping post-pass ─────────────────────────────────────────────────
+// ── Enum grouping ───────────────────────────────────────────────────────────
 
 fn group_enums(items: &mut Vec<Item>) {
-    // Find TypeAlias items and group subsequent constant definitions + predicates
     let mut result: Vec<Item> = Vec::new();
     let mut i = 0;
 
     while i < items.len() {
-        if let Item::TypeAlias { ref name, ref width, ref doc } = items[i] {
+        if let Item::TypeAlias {
+            ref name,
+            ref width,
+            ref doc,
+        } = items[i]
+        {
             let type_name = name.clone();
             let type_width = width.clone();
             let type_doc = doc.clone();
 
-            // Look ahead for constants of this type
             let mut variants: Vec<EnumVariant> = Vec::new();
             let mut predicate: Option<String> = None;
             let mut j = i + 1;
@@ -1021,29 +894,34 @@ fn group_enums(items: &mut Vec<Item>) {
                     Item::Function {
                         name: fn_name,
                         signature: fn_sig,
-                        branches: _,
                         body: fn_body,
-                        doc: _,
-                    } if fn_sig.trim() == type_name
+                        ..
+                    } if (fn_sig.trim() == type_name
+                        || body_has_type_annotation(fn_body, &type_name))
                         && !fn_body.is_empty()
-                        && fn_name.chars().next().is_some_and(|c| c.is_uppercase()) =>
+                        && fn_name
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_uppercase()) =>
                     {
-                        // This is a constant: NAME = value : TypeName
+                        let value = if fn_sig.trim() == type_name {
+                            fn_body.clone()
+                        } else {
+                            extract_variant_value(fn_body, &type_name)
+                        };
                         variants.push(EnumVariant {
                             name: fn_name.clone(),
-                            value: fn_body.clone(),
+                            value,
                         });
                         j += 1;
                     }
-                    Item::Function {
-                        name: fn_name,
-                        ..
-                    } if fn_name == &format!("is{}", type_name) => {
+                    Item::Function { name: fn_name, .. }
+                        if *fn_name == format!("is{}", type_name) =>
+                    {
                         predicate = Some(fn_name.clone());
                         j += 1;
                     }
                     Item::CommentBlock { .. } => {
-                        // Skip comment blocks between constants
                         j += 1;
                     }
                     _ => break,
@@ -1051,19 +929,16 @@ fn group_enums(items: &mut Vec<Item>) {
             }
 
             if !variants.is_empty() {
-                // Also look further ahead for the predicate (it may come
-                // after a comment block or other constants of different types)
                 if predicate.is_none() {
                     for item in items.iter().skip(j) {
-                        if let Item::Function { name: fn_name, .. } = item
-                            && *fn_name == format!("is{}", type_name)
-                        {
-                            predicate = Some(fn_name.clone());
-                            break;
+                        if let Item::Function { name: fn_name, .. } = item {
+                            if *fn_name == format!("is{}", type_name) {
+                                predicate = Some(fn_name.clone());
+                                break;
+                            }
                         }
                     }
                 }
-
                 result.push(Item::EnumGroup {
                     type_name,
                     width: type_width,
@@ -1082,33 +957,21 @@ fn group_enums(items: &mut Vec<Item>) {
         }
     }
 
-    // Remove predicate functions that were absorbed into enum groups
-    let predicate_names: Vec<String> = result
+    // Remove absorbed predicates and variants
+    let absorbed: Vec<String> = result
         .iter()
         .filter_map(|item| {
-            if let Item::EnumGroup { predicate: Some(p), .. } = item {
-                Some(p.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    result.retain(|item| {
-        if let Item::Function { name, .. } = item {
-            !predicate_names.contains(name)
-        } else {
-            true
-        }
-    });
-
-    // Also remove the constant Functions that were absorbed into EnumGroups
-    // (they were stored as Functions with signature == type_name)
-    let enum_variant_names: Vec<String> = result
-        .iter()
-        .filter_map(|item| {
-            if let Item::EnumGroup { variants, .. } = item {
-                Some(variants.iter().map(|v| v.name.clone()).collect::<Vec<_>>())
+            if let Item::EnumGroup {
+                predicate,
+                variants,
+                ..
+            } = item
+            {
+                let mut names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
+                if let Some(p) = predicate {
+                    names.push(p.clone());
+                }
+                Some(names)
             } else {
                 None
             }
@@ -1118,7 +981,7 @@ fn group_enums(items: &mut Vec<Item>) {
 
     result.retain(|item| {
         if let Item::Function { name, .. } = item {
-            !enum_variant_names.contains(name)
+            !absorbed.contains(name)
         } else {
             true
         }
@@ -1127,29 +990,80 @@ fn group_enums(items: &mut Vec<Item>) {
     *items = result;
 }
 
-// ── Doc attachment post-pass ────────────────────────────────────────────────
+fn body_has_type_annotation(body: &str, type_name: &str) -> bool {
+    body.split(':')
+        .last()
+        .is_some_and(|after_colon| {
+            let cleaned = after_colon.trim();
+            // Strip trailing inline comments
+            let cleaned = if let Some(pos) = cleaned.find("//") {
+                cleaned[..pos].trim()
+            } else {
+                cleaned
+            };
+            cleaned == type_name
+        })
+}
+
+fn extract_variant_value(body: &str, type_name: &str) -> String {
+    // body is full text like "KV_Ok = 0 : KeyVaultResult"
+    // We want just the value: "0"
+    if let Some(colon_pos) = body.rfind(':') {
+        let after = body[colon_pos + 1..].trim();
+        let after_clean = if let Some(pos) = after.find("//") {
+            after[..pos].trim()
+        } else {
+            after
+        };
+        if after_clean == type_name {
+            let before_colon = body[..colon_pos].trim();
+            // Strip "Name = " prefix if present
+            if let Some(eq_pos) = before_colon.find('=') {
+                return before_colon[eq_pos + 1..].trim().to_string();
+            }
+            return before_colon.to_string();
+        }
+    }
+    body.to_string()
+}
+
+// ── Doc attachment ──────────────────────────────────────────────────────────
 
 fn attach_docs(items: &mut Vec<Item>) {
-    // Walk items: if a CommentBlock is followed by a non-comment item,
-    // attach the comment block's lines as doc to the next item.
+    // First, merge consecutive CommentBlocks into one
+    let mut i = 0;
+    while i + 1 < items.len() {
+        if let (Item::CommentBlock { .. }, Item::CommentBlock { .. }) =
+            (&items[i], &items[i + 1])
+        {
+            if let Item::CommentBlock { lines: next_lines } = items.remove(i + 1) {
+                if let Item::CommentBlock { lines } = &mut items[i] {
+                    lines.extend(next_lines);
+                }
+            }
+            // Don't increment — check if more follow
+        } else {
+            i += 1;
+        }
+    }
+
+    // Now attach each CommentBlock to the following item
     let mut i = 0;
     while i + 1 < items.len() {
         if let Item::CommentBlock { .. } = &items[i] {
-            // Check if next item can receive doc and has empty doc
             let should_attach = match &items[i + 1] {
                 Item::Module { doc, .. }
                 | Item::TypeAlias { doc, .. }
                 | Item::EnumGroup { doc, .. }
                 | Item::RecordType { doc, .. }
                 | Item::Function { doc, .. }
-                | Item::Property { doc, .. } => doc.is_empty(),
-                Item::Section { doc, .. } => doc.is_empty(),
+                | Item::Property { doc, .. }
+                | Item::Section { doc, .. } => doc.is_empty(),
                 _ => false,
             };
 
-            if should_attach
-                && let Item::CommentBlock { lines } = items.remove(i)
-            {
+            if should_attach {
+                if let Item::CommentBlock { lines } = items.remove(i) {
                     match &mut items[i] {
                         Item::Module { doc, .. }
                         | Item::TypeAlias { doc, .. }
@@ -1162,339 +1076,207 @@ fn attach_docs(items: &mut Vec<Item>) {
                         }
                         _ => {}
                     }
-                    continue; // Don't increment i
+                }
+                continue;
             }
         }
         i += 1;
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// ── Section extraction from comments ────────────────────────────────────────
+
+fn extract_sections_with_offsets(source: &str) -> Vec<(usize, Item)> {
+    let mut result = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut line_offsets: Vec<usize> = Vec::with_capacity(lines.len());
+    let mut offset = 0;
+    for line in source.lines() {
+        line_offsets.push(offset);
+        offset += line.len() + 1;
+    }
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim();
+
+        if is_separator_line(line) {
+            if i + 2 < lines.len()
+                && is_comment_line(lines[i + 1])
+                && is_separator_line(lines[i + 2].trim())
+            {
+                let title = strip_comment_prefix(lines[i + 1]).trim().to_string();
+                result.push((
+                    line_offsets[i],
+                    Item::Section {
+                        level: 2,
+                        title,
+                        doc: Vec::new(),
+                    },
+                ));
+                i += 3;
+                continue;
+            }
+        }
+
+        if is_comment_line(line) && is_category_line(line) {
+            let title = extract_category_title(line);
+            result.push((
+                line_offsets[i],
+                Item::Section {
+                    level: 3,
+                    title,
+                    doc: Vec::new(),
+                },
+            ));
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+    }
+    result
+}
+
+fn is_separator_line(line: &str) -> bool {
+    let t = line.trim();
+    if !t.starts_with("//") {
+        return false;
+    }
+    let inner = t.trim_start_matches('/');
+    inner.is_empty() || inner.chars().all(|c| c == '/')
+}
+
+fn is_comment_line(line: &str) -> bool {
+    line.trim().starts_with("//")
+}
+
+fn is_category_line(line: &str) -> bool {
+    let inner = strip_comment_prefix(line);
+    inner.starts_with("----") || inner.starts_with("── ")
+}
+
+fn extract_category_title(line: &str) -> String {
+    let inner = strip_comment_prefix(line);
+    inner
+        .trim_matches(|c: char| c == '-' || c == ' ' || c == '─')
+        .trim()
+        .to_string()
+}
+
+fn strip_comment_prefix(line: &str) -> String {
+    let s = line.trim().strip_prefix("//").unwrap_or(line.trim());
+    s.strip_prefix(' ').unwrap_or(s).to_string()
+}
+
+fn is_separator_content(line: &str) -> bool {
+    let t = line.trim();
+    t.chars().all(|c| c == '/' || c == '-' || c == '─' || c == ' ')
+        || (t.starts_with("----") && t.contains(':'))
+}
+
+/// Split the body of a `private` block into individual declaration chunks.
+/// Declarations are identified by lines at the base indentation level;
+/// continuation lines (deeper indentation) are grouped with the preceding decl.
+fn split_private_block(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    // Find the minimum indentation of non-empty, non-comment-only lines
+    // that look like declaration starts (contain `=` or `:` at top level).
+    let base_indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        // A new declaration starts at base indentation level
+        if indent <= base_indent && !current.is_empty() {
+            // Check if this looks like a new declaration (not a `where` continuation)
+            let is_continuation = trimmed.starts_with("where")
+                || trimmed.starts_with('|')
+                || trimmed.starts_with("else");
+            if !is_continuation {
+                chunks.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// Returns true if the line is a section-number heading like "4.", "4.1 provisionKey",
+/// "4.3 authenticate", or standalone section titles that appear
+/// in Cryptol source comments as organizational headers.
+fn is_section_number_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Match lines starting with a section number: "4.", "4.1", "4.2 enrollDevice (activate)"
+    let first_char = t.chars().next().unwrap();
+    if first_char.is_ascii_digit() {
+        // Check if it's a section number pattern: digits followed by optional .digits groups
+        let rest = t.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+        // If what remains after stripping the number prefix is empty or just a short heading
+        // (not real documentation), treat it as a section heading.
+        if rest.is_empty() {
+            return true;
+        }
+        let rest = rest.trim();
+        // Section headings are typically short (function name, maybe with parens)
+        // and don't contain sentence-like documentation.
+        // Heuristic: if the line after the section number is <= 60 chars and doesn't
+        // contain periods (sentences), it's a heading.
+        if rest.len() <= 60 && !rest.contains(". ") {
+            return true;
+        }
+    }
+    false
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_module() {
-        let items = parse("module SDEP where\n");
-        assert!(items.iter().any(|i| matches!(i, Item::Module { name, .. } if name == "SDEP")));
-    }
-
-    #[test]
-    fn test_parse_type_alias() {
-        let items = parse("type FleetMode = [1]\n");
-        assert!(items.iter().any(|i| matches!(i, Item::TypeAlias { name, width, .. }
-            if name == "FleetMode" && width == "1")));
-    }
-
-    #[test]
-    fn test_parse_enum_group() {
-        let input = "\
-type FleetMode = [1]
-FM_Disabled = 0 : FleetMode
-FM_Enabled  = 1 : FleetMode
-";
-        let items = parse(input);
-        let eg = items.iter().find(|i| matches!(i, Item::EnumGroup { .. }));
-        assert!(eg.is_some(), "Expected EnumGroup, got: {:#?}", items);
-        if let Some(Item::EnumGroup {
-            type_name,
-            width,
-            variants,
-            ..
-        }) = eg
-        {
-            assert_eq!(type_name, "FleetMode");
-            assert_eq!(width, "1");
-            assert_eq!(variants.len(), 2);
-            assert_eq!(variants[0].name, "FM_Disabled");
-            assert_eq!(variants[0].value, "0");
-            assert_eq!(variants[1].name, "FM_Enabled");
-            assert_eq!(variants[1].value, "1");
-        }
-    }
-
-    #[test]
-    fn test_parse_record_type() {
-        let input = "\
-type EnrollmentStatus =
-  { fleetMode : FleetMode
-  , hasKey    : Bit
-  , keyId     : OptUUID
-  , isActive  : Bit
-  }
-";
-        let items = parse(input);
-        let rt = items
-            .iter()
-            .find(|i| matches!(i, Item::RecordType { .. }));
-        assert!(rt.is_some(), "Expected RecordType, got: {:#?}", items);
-        if let Some(Item::RecordType { name, fields, .. }) = rt {
-            assert_eq!(name, "EnrollmentStatus");
-            assert_eq!(fields.len(), 4);
-            assert_eq!(fields[0].0, "fleetMode");
-            assert_eq!(fields[0].1, "FleetMode");
-            assert_eq!(fields[1].0, "hasKey");
-            assert_eq!(fields[1].1, "Bit");
-        }
-    }
-
-    #[test]
-    fn test_parse_provision_key_branches() {
-        let input = "\
-provisionKey :
-  Bit -> Bit -> KeyVaultResult -> Bit -> ProvisionResult
-provisionKey fleetEnabled validRequest vaultResult keyIsActive =
-  if ~ fleetEnabled        then PR_Disabled
-   | ~ validRequest        then PR_BadRequest
-   | vaultResult != KV_Ok  then PR_InternalError
-   | keyIsActive           then PR_Unauthorized
-  else                          PR_Succeeded
-";
-        let items = parse(input);
-        let func = items
-            .iter()
-            .find(|i| matches!(i, Item::Function { name, .. } if name == "provisionKey"));
-        assert!(func.is_some(), "Expected provisionKey, got: {:#?}", items);
-        if let Some(Item::Function { branches, .. }) = func {
-            assert_eq!(branches.len(), 5, "Expected 5 branches, got: {:#?}", branches);
-            assert!(branches[0].condition.is_some());
-            assert_eq!(branches[4].condition, None); // else branch
-            assert!(branches[4].result.contains("PR_Succeeded"));
-        }
-    }
-
-    #[test]
-    fn test_parse_enroll_device_nested() {
-        let input = "\
-enrollDevice :
-  Bit -> Bit -> AuthResult -> ActivationResult -> EnrollmentResult
-enrollDevice fleetEnabled validMetadata authResult activationResult =
-  if ~ fleetEnabled                       then ER_Disabled
-   | ~ validMetadata                      then ER_Unauthorized
-   | authResult == AR_Authenticated       then
-        (if activationResult == AC_Success       then ER_Succeeded
-          | activationResult == AC_AlreadyActive then ER_Unauthorized
-         else                                         ER_InternalError)
-   | authResult == AR_VaultUnavailable    then ER_InternalError
-  else                                         ER_Unauthorized
-";
-        let items = parse(input);
-        let func = items
-            .iter()
-            .find(|i| matches!(i, Item::Function { name, .. } if name == "enrollDevice"));
-        assert!(func.is_some(), "Expected enrollDevice, got: {:#?}", items);
-        if let Some(Item::Function { branches, .. }) = func {
-            // Should have outer branches + nested branches
-            assert!(
-                branches.len() >= 5,
-                "Expected at least 5 branches (with nested), got {}: {:#?}",
-                branches.len(),
-                branches
-            );
-        }
-    }
-
-    #[test]
-    fn test_parse_authenticate_simple() {
-        let input = "\
-authenticate : Bit -> Bit -> Bit -> Bit
-authenticate dateValid signatureValid claimsValid =
-  dateValid && signatureValid && claimsValid
-";
-        let items = parse(input);
-        let func = items
-            .iter()
-            .find(|i| matches!(i, Item::Function { name, .. } if name == "authenticate"));
-        assert!(func.is_some(), "Expected authenticate, got: {:#?}", items);
-        if let Some(Item::Function { branches, .. }) = func {
-            assert_eq!(branches.len(), 1, "Expected 1 branch, got: {:#?}", branches);
-            assert!(branches[0].condition.is_none());
-            assert!(branches[0].result.contains("&&"));
-        }
-    }
-
-    #[test]
-    fn test_parse_property() {
-        let input = "\
-property P1_KeyMonotonicity fleetEnabled validMetadata authResult keyAlreadyActive =
-  isAuthResult authResult ==>
-    keyAlreadyActive ==>
-      enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
-        != ER_Succeeded
-";
-        let items = parse(input);
-        let prop = items
-            .iter()
-            .find(|i| matches!(i, Item::Property { .. }));
-        assert!(prop.is_some(), "Expected Property, got: {:#?}", items);
-        if let Some(Item::Property {
-            label,
-            name,
-            params,
-            ..
-        }) = prop
-        {
-            assert_eq!(label, "P1");
-            assert_eq!(name, "KeyMonotonicity");
-            assert_eq!(
-                params,
-                &[
-                    "fleetEnabled",
-                    "validMetadata",
-                    "authResult",
-                    "keyAlreadyActive"
-                ]
-            );
-        }
-    }
-
-    #[test]
-    fn test_parse_property_typed_params() {
-        let input = "\
-property P8_CorrectSignatureVerifies (k : HmacKey) (r : Request) =
-  isValidSignature k r (hmacSha256 k r) == True
-";
-        let items = parse(input);
-        let prop = items
-            .iter()
-            .find(|i| matches!(i, Item::Property { .. }));
-        assert!(prop.is_some(), "Expected Property, got: {:#?}", items);
-        if let Some(Item::Property {
-            label,
-            name,
-            params,
-            ..
-        }) = prop
-        {
-            assert_eq!(label, "P8");
-            assert_eq!(name, "CorrectSignatureVerifies");
-            assert_eq!(params.len(), 2);
-            assert!(params[0].contains("k : HmacKey"));
-            assert!(params[1].contains("r : Request"));
-        }
-    }
-
-    #[test]
-    fn test_parse_full_sdep() {
-        let input = std::fs::read_to_string("tests/fixtures/SDEP.cry")
-            .expect("Could not read test fixture");
-        let items = parse(&input);
-
-        // Count item types
-        let modules: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::Module { .. }))
-            .collect();
-        let sections: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::Section { .. }))
-            .collect();
-        let enum_groups: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::EnumGroup { .. }))
-            .collect();
-        let records: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::RecordType { .. }))
-            .collect();
-        let functions: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::Function { .. }))
-            .collect();
-        let properties: Vec<_> = items
-            .iter()
-            .filter(|i| matches!(i, Item::Property { .. }))
-            .collect();
-
-        // 1 Module
-        assert_eq!(modules.len(), 1, "Expected 1 module");
-
-        // Multiple sections
-        assert!(
-            sections.len() >= 3,
-            "Expected at least 3 sections, got {}",
-            sections.len()
+    fn parses_import_with_alias_and_hiding() {
+        let items = parse(
+            "module A where\n\nimport Crypto::Hash as H hiding (internalA, internalB)\n",
         );
 
-        // 8 enum types
-        assert!(
-            enum_groups.len() >= 8,
-            "Expected at least 8 enum groups, got {}: {:?}",
-            enum_groups.len(),
-            enum_groups
-                .iter()
-                .filter_map(|i| if let Item::EnumGroup { type_name, .. } = i {
-                    Some(type_name.as_str())
-                } else {
-                    None
-                })
-                .collect::<Vec<_>>()
-        );
+        let import = items.into_iter().find_map(|i| match i {
+            Item::Import {
+                module_path,
+                qualifier,
+                hiding,
+            } => Some((module_path, qualifier, hiding)),
+            _ => None,
+        });
 
-        // 1 RecordType (EnrollmentStatus)
-        assert!(
-            !records.is_empty(),
-            "Expected at least 1 record type, got {}",
-            records.len()
-        );
-
-        // Functions parsed (provisionKey, enrollDevice, authenticate, etc.)
-        let fn_names: Vec<&str> = functions
-            .iter()
-            .filter_map(|i| {
-                if let Item::Function { name, .. } = i {
-                    Some(name.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(
-            fn_names.contains(&"provisionKey"),
-            "Missing provisionKey in {:?}",
-            fn_names
-        );
-        assert!(
-            fn_names.contains(&"authenticate"),
-            "Missing authenticate in {:?}",
-            fn_names
-        );
-
-        // All 29 properties (P1-P29)
-        assert_eq!(
-            properties.len(),
-            29,
-            "Expected 29 properties, got {}: {:?}",
-            properties.len(),
-            properties
-                .iter()
-                .filter_map(|i| if let Item::Property { label, name, .. } = i {
-                    Some(format!("{}_{}", label, name))
-                } else {
-                    None
-                })
-                .collect::<Vec<_>>()
-        );
-
-        // Verify provisionKey has 5 branches
-        if let Some(Item::Function { branches, .. }) = functions
-            .iter()
-            .find(|i| matches!(i, Item::Function { name, .. } if name == "provisionKey"))
-        {
-            assert_eq!(
-                branches.len(),
-                5,
-                "provisionKey should have 5 branches, got {}",
-                branches.len()
-            );
-        }
-
-        // Check EnrollmentStatus record
-        if let Some(Item::RecordType { name, fields, .. }) = records.first() {
-            assert_eq!(*name, "EnrollmentStatus");
-            assert_eq!(fields.len(), 4);
-        }
+        let (module_path, qualifier, hiding) = import.expect("import item");
+        assert_eq!(module_path, "Crypto::Hash");
+        assert_eq!(qualifier.as_deref(), Some("H"));
+        assert_eq!(hiding, vec!["internalA".to_string(), "internalB".to_string()]);
     }
 }

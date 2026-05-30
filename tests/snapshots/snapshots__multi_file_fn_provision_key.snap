@@ -4,12 +4,24 @@ expression: content
 ---
 # `provisionKey`
 
-**Signature:** `fleetEnabled validRequest vaultResult keyIsActive`
+### Signature
 
-//////////////////////////////////////////////////////////////////////////////
-4. Decision logic
-//////////////////////////////////////////////////////////////////////////////
-4.1 provisionKey
+**Parameters**
+- `fleetEnabled`: Bit
+- `validRequest`: Bit
+- `vaultResult`: [KeyVaultResult](../types.md#keyvaultresult)
+- `keyIsActive`: Bit
+
+**Returns**
+- [ProvisionResult](../types.md#provisionresult)
+
+<details><summary>Raw signature</summary>
+
+`Bit -> Bit -> KeyVaultResult -> Bit -> ProvisionResult`
+
+</details>
+
+Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `[ProvisionResult](../types.md#provisionresult)`. Defaults to `[PR_Succeeded](../types.md#provisionresult)` when no prior condition matches.
 
 | # | Condition | Result |
 |---|-----------|--------|
@@ -18,6 +30,22 @@ expression: content
 | 3 | vaultResult != [KV_Ok](../types.md#keyvaultresult) | [PR_InternalError](../types.md#provisionresult) |
 | 4 | keyIsActive | [PR_Unauthorized](../types.md#provisionresult) |
 | 5 | *(otherwise)* | [PR_Succeeded](../types.md#provisionresult) |
+
+```mermaid
+flowchart TD
+  Start(["provisionKey"])
+  Start --> C0{"~ fleetEnabled"}
+  C0 -->|Yes| R0("PR_Disabled")
+  C0 -->|No| C1{"~ validRequest"}
+  C1 -->|Yes| R1("PR_BadRequest")
+  C1 -->|No| C2{"vaultResult != KV_Ok"}
+  C2 -->|Yes| R2("PR_InternalError")
+  C2 -->|No| C3{"keyIsActive"}
+  C3 -->|Yes| R3("PR_Unauthorized")
+  C3 -->|No| R4("PR_Succeeded")
+  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0
+  style Start fill:#1565C0,stroke:#0D47A1,color:#fff,stroke-width:2px
+```
 
 ### Related Properties
 - [P2 — Active Prevents Provisioning](../properties/key-lifecycle-safety.md#p2--active-prevents-provisioning)

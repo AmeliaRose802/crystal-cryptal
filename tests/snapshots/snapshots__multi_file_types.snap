@@ -5,7 +5,7 @@ expression: content
 # Types
 
 ### FleetMode
-////////////////////////////////////////////////////////////////////////////// 2. Data types ////////////////////////////////////////////////////////////////////////////// 2.1 Enumerations are encoded as small bit-vectors. Only the listed constructor values are considered "well-formed"; properties that range over an enum constrain the input with an `is<Enum>` predicate.
+2.1 Enumerations are encoded as small bit-vectors. Only the listed constructor values are considered "well-formed"; properties that range over an enum constrain the input with an `is<Enum>` predicate.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -13,7 +13,7 @@ expression: content
 | `FM_Enabled` | 1 | |
 
 ### KeyVaultResult
-A 2 value.
+A 2-bit enumeration with 3 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -21,8 +21,10 @@ A 2 value.
 | `KV_NotFound` | 1 | |
 | `KV_IoError` | 2 | |
 
+Used by: [`provisionKey`](functions/provisionKey.md)
+
 ### AuthResult
-A 2 value.
+A 2-bit enumeration with 3 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -30,16 +32,21 @@ A 2 value.
 | `AR_Unauthenticated` | 1 | |
 | `AR_VaultUnavailable` | 2 | |
 
+Used by: [`enrollDevice`](functions/enrollDevice.md)
+
 ### ActivationResult
-A 2 value.
+A 2-bit enumeration with 3 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
 | `AC_Success` | 0 | |
 | `AC_AlreadyActive` | 1 | |
+| `AC_IoFailure` | 2 | |
+
+Used by: [`enrollDevice`](functions/enrollDevice.md)
 
 ### ProvisionResult
-A 3 value.
+A 3-bit enumeration with 5 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -49,8 +56,10 @@ A 3 value.
 | `PR_Disabled` | 3 | |
 | `PR_InternalError` | 4 | |
 
+Used by: [`provisionKey`](functions/provisionKey.md)
+
 ### EnrollmentResult
-A 2 value.
+A 2-bit enumeration with 4 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -59,8 +68,10 @@ A 2 value.
 | `ER_Disabled` | 2 | |
 | `ER_InternalError` | 3 | |
 
+Used by: [`enrollDevice`](functions/enrollDevice.md)
+
 ### AccessMode
-A 2 value.
+A 2-bit enumeration with 3 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -68,8 +79,10 @@ A 2 value.
 | `AM_Audit` | 1 | |
 | `AM_Enforce` | 2 | |
 
+Used by: [`enforceAccess`](functions/enforceAccess.md)
+
 ### AccessDecision
-A 2 value.
+A 2-bit enumeration with 3 variants.
 
 | Name | Value | Description |
 |------|-------|-------------|
@@ -77,9 +90,19 @@ A 2 value.
 | `AD_Deny` | 1 | |
 | `AD_NoRule` | 2 | |
 
-**UUID** — `128` — 2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.
+Used by: [`enforceAccess`](functions/enforceAccess.md)
 
-**OptUUID** — `( Bit , UUID )` — Option<UUID> is encoded as a (present?, value) pair.
+### UUID
+`128`
+
+2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.
+
+Used by: [`getStatus`](functions/getStatus.md)
+
+### OptUUID
+`(Bit, UUID)`
+
+Option<UUID> is encoded as a (present?, value) pair.
 
 ### EnrollmentStatus
 
@@ -90,23 +113,62 @@ A 2 value.
 | `keyId` | OptUUID | |
 | `isActive` | Bit | |
 
-**Timestamp** — `64` — 4.3.1 isValidRequestDate   true iff requestTimestamp <= currentTime          && currentTime - requestTimestamp <= windowSeconds Timestamps and windows are unbounded naturals in spec; we use 64-bit.
+Used by: [`getStatus`](functions/getStatus.md)
 
-**Window** — `64`
+### Timestamp
+`64`
 
-**HmacKey** — `256` — 4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC. The Cryptol-level model treats HMAC-SHA256 as an opaque function from (key, payload) to a 256-bit tag, and constantTimeEquals as `==`. The canonicalizePayload step is collapsed into the abstract request value because canonicalization is itself a pure function of the request.
+true iff requestTimestamp <= currentTime && currentTime - requestTimestamp <= windowSeconds Timestamps and windows are unbounded naturals in spec; we use 64-bit.
 
-**HmacTag** — `256`
+Used by: [`isValidRequestDate`](functions/isValidRequestDate.md), [`verifierTimestamp_current`](functions/verifierTimestamp_current.md)
 
-**Request** — `256`
+### Window
+`64`
 
-**FL** — `16` — ////////////////////////////////////////////////////////////////////////////// 6. Canonicalization byte-injectivity (string-processing layer)  `canonicalizePayload` in cpp/src/canonical.cpp and rust/src/lib.rs produces the byte string the HMAC is computed over. The protocol's security goal — distinct requests yield distinct HMAC inputs — requires this canonical byte stream to be *injective* in the request. A failure here is exactly the shape of real-world signature-confusion vulnerabilities (AWS SigV4 ambiguity, HTTP request smuggling).  HISTORY. The original SDEP encoder concatenated variable-length fields with a single '\n' delimiter:      method '\n' body '\n' canonHeaders '\n' path '\n' canonQuery  That encoding is NOT injective: a newline smuggled into the body shifts the parse boundary into the next field, producing identical canonical bytes for distinct requests. (This was P23_CanonConcatInjective in earlier revisions of this file; Z3 exhibits a concrete two-field counterexample at every field length >= 2.)  FIX. The encoder now prepends each variable-length field with its byte length (a fixed-width unsigned length tag). A parser reads exactly the declared number of bytes for each field, so no byte inside any field can be mistaken for a boundary. P23 below proves injectivity of this encoder.  SCOPE OF THIS PROOF (bounded model checking). Cryptol + Z3 bit-blasts a fixed-size formula and hands it to SAT; there is no loop induction. The proof is over two fields of up to FL = 16 bytes each. It covers every concrete configuration at that size; the structural argument (a fixed-width length tag uniquely determines field boundaries) extends to arbitrary n and is what the production C++ / Rust encoders implement with a 64-bit big-endian length tag. A native-induction prover (Dafny / F* / Lean / Coq) or a SAW Hoare-logic proof over the loop in canonicalizePayload would extend the bound to all n. ////////////////////////////////////////////////////////////////////////////// Field length in bytes (parameter for the bounded model).
+Used by: [`isValidRequestDate`](functions/isValidRequestDate.md)
 
-**IW** — `8` — Index/length width: one byte is more than enough for FL <= 127.
+### HmacKey
+`256`
 
-**FLs** — `2 // field length bound, bytes` — ////////////////////////////////////////////////////////////////////////////// 6.d Tier-2 gaps and what blocks them.  The following three properties are real and would meaningfully strengthen the spec, but each is blocked by a distinct obstacle:    (Gap 4)  AUTH-HEADER EXCLUSION            canonicalizePayload must be independent of the            x-fleet-authorization header value.            BLOCKED BY: the `Request = [256]` abstraction. The whole point            of collapsing the canonical bytes into one opaque Cryptol            value was to keep P8/P9 cheap; that collapse erases the            internal structure (headers, etc.) needed to *state* this            property.  STATEMENT (after refactor):              property P_AuthExcluded r v1 v2 =                canonicalize (r withAuth v1) == canonicalize (r withAuth v2)            COST: replace abstract Request with a structured record type            { method, path, headers : [N](Name, Value), body, timestamp }            and rebuild isValidSignature on top of it. One refactor also            unblocks Gap 6.    (Gap 6)  TIMESTAMP BINDING — FIXED.            The timestamp validated by isValidRequestDate is now bound            into the signed canonical bytes: `DeviceRequest::timestamp`            is appended to canonicalizePayload, and `handle_activate`            passes `request.timestamp` (NOT a caller parameter) to            `isValidRequestDate`. Mechanised as P29_TimestampBound            against the structured `RequestS` model; the historical            `requestTimestampUnix` caller parameter has been removed.    (Gap 5)  CONSTANT-TIME COMPARISON            constant_time_equals must execute the same sequence of basic            blocks regardless of which byte position first differs.            BLOCKED BY: Cryptol's semantic universe. Cryptol is a pure            functional spec language — it describes *values*, not            *executions*. The constant-time and variable-time            implementations of byte-equality are *the same Cryptol            function* (`\a b -> a == b`), so no Cryptol property can tell            them apart. This obligation belongs at the SAW / LLVM level:            symbolic execution of `crypto::constant_time_equals` for            inputs that differ only in *where* they first diverge must            produce the same control-flow trace. SAW can express this via            `crucible_path_condition`-style assertions; it just isn't            wired up here yet. ////////////////////////////////////////////////////////////////////////////// ////////////////////////////////////////////////////////////////////////////// 7. Compositional refinement — structured Request model  The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but blocks any property that needs to look INSIDE the request. We add a STRUCTURED layer alongside the abstract one. Existing properties P1–P27 keep reasoning about `Request = [256]`; new properties P28+ reason about `RequestS`. The two layers are linked by viewing the abstract `Request` as some hash of `canonicalizeS r`; that bridge is documentary — no property below depends on it, so the refinement is purely additive.  Bounded sizes for BMC: 2-byte fields, 2 headers per request. This is small enough to keep Z3 fast (~1s/property) and large enough to exhibit every structural counterexample shape we care about. //////////////////////////////////////////////////////////////////////////////
+4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC. The Cryptol-level model treats HMAC-SHA256 as an opaque function from (key, payload) to a 256-bit tag, and constantTimeEquals as `==`.
 
-**Ns** — `2 // bounded header count`
+Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
+
+### HmacTag
+`256`
+
+Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
+
+### Request
+`256`
+
+Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
+
+### FL
+`16`
+
+The encoder now prepends each variable-length field with its byte length (a fixed-width unsigned length tag). A parser reads exactly the declared number of bytes for each field, so no byte inside any field can be mistaken for a boundary.
+
+Used by: [`canonNormalized`](functions/canonNormalized.md), [`canonLenPrefixed`](functions/canonLenPrefixed.md)
+
+### IW
+`8`
+
+Index/length width: one byte is more than enough for FL <= 127.
+
+Used by: [`canonNormalized`](functions/canonNormalized.md), [`canonLenPrefixed`](functions/canonLenPrefixed.md)
+
+### FLs
+`2`
+
+The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but blocks any property that needs to look INSIDE the request. Bounded sizes for BMC: 2-byte fields, 2 headers per request.
+
+Used by: [`lpField`](functions/lpField.md), [`lpHeader`](functions/lpHeader.md), [`canonicalizeS`](functions/canonicalizeS.md)
+
+### Ns
+`2`
+
+Used by: [`canonicalizeS`](functions/canonicalizeS.md)
 
 ### Field
 A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
@@ -114,11 +176,13 @@ A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `len` | [ IW ] | |
-| `buf` | [ FLs ] [ 8 ] | |
+| `len` | [IW] | |
+| `buf` | [FLs][8] | |
+
+Used by: [`fieldNormalized`](functions/fieldNormalized.md), [`lpField`](functions/lpField.md)
 
 ### Header
-One header is a (name, value) pair plus a flag marking it as the auth header (x-fleet-authorization) so the canonicalizer can exclude it.
+One header is a (name, value) pair plus a flag marking it as the auth header (x-fleet-authorization) so the canonicalizer can exclude it.
 
 
 | Field | Type | Description |
@@ -126,6 +190,8 @@ One header is a (name, value) pair plus a flag marking it as the auth header (x
 | `name` | Field | |
 | `value` | Field | |
 | `isAuth` | Bit | |
+
+Used by: [`lpHeader`](functions/lpHeader.md)
 
 ### RequestS
 
@@ -135,4 +201,6 @@ One header is a (name, value) pair plus a flag marking it as the auth header (x
 | `path` | Field | |
 | `body` | Field | |
 | `timestamp` | Timestamp | |
-| `hdrs` | [ Ns ] Header | |
+| `hdrs` | [Ns]Header | |
+
+Used by: [`requestNormalized`](functions/requestNormalized.md), [`canonicalizeS`](functions/canonicalizeS.md), [`verifierTimestamp_current`](functions/verifierTimestamp_current.md)

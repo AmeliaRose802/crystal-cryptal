@@ -5,7 +5,13 @@ use std::collections::HashMap;
 use convert_case::{Case, Casing};
 use regex::Regex;
 
-use crate::ir::Item;
+use crate::ir::{Branch, Item};
+
+pub struct ModuleSpec<'a> {
+    pub name: &'a str,
+    pub output_prefix: &'a str,
+    pub items: &'a [Item],
+}
 
 pub struct SymbolTable {
     /// Maps symbol name → (target_file, anchor)
@@ -23,6 +29,57 @@ pub struct SymbolTable {
 
 impl SymbolTable {
     pub fn build(items: &[Item]) -> Self {
+        Self::build_for_module_with_prefix(items, "")
+    }
+
+    pub fn build_for_modules(modules: &[ModuleSpec<'_>]) -> Self {
+        let mut symbols: HashMap<String, (String, String)> = HashMap::new();
+        let mut property_categories: HashMap<String, String> = HashMap::new();
+        let mut related_properties: HashMap<String, Vec<(String, String, String)>> =
+            HashMap::new();
+
+        let mut function_names: Vec<String> = Vec::new();
+        for module in modules {
+            for item in module.items {
+                if let Item::Function {
+                    name,
+                    signature,
+                    branches,
+                    body,
+                    ..
+                } = item
+                {
+                    if !signature.contains("->") && branches.is_empty() {
+                        continue;
+                    }
+                    if is_simple_constructor(name, branches, body) {
+                        continue;
+                    }
+                    function_names.push(name.clone());
+                }
+            }
+        }
+
+        for module in modules {
+            Self::collect_module_symbols(
+                module.name,
+                module.output_prefix,
+                module.items,
+                &function_names,
+                &mut symbols,
+                &mut property_categories,
+                &mut related_properties,
+            );
+        }
+
+        Self {
+            symbols,
+            related_properties,
+            property_categories,
+        }
+    }
+
+    pub fn build_for_module_with_prefix(items: &[Item], output_prefix: &str) -> Self {
         let mut symbols: HashMap<String, (String, String)> = HashMap::new();
         let mut property_categories: HashMap<String, String> = HashMap::new();
         let mut related_properties: HashMap<String, Vec<(String, String, String)>> =
@@ -32,12 +89,57 @@ impl SymbolTable {
         let function_names: Vec<String> = items
             .iter()
             .filter_map(|item| match item {
-                Item::Function { name, .. } => Some(name.clone()),
+                Item::Function {
+                    name,
+                    signature,
+                    branches,
+                    body,
+                    ..
+                } => {
+                    if !signature.contains("->") && branches.is_empty() {
+                        return None;
+                    }
+                    if is_simple_constructor(name, branches, body) {
+                        return None;
+                    }
+                    Some(name.clone())
+                }
                 _ => None,
             })
             .collect();
 
+        Self::collect_module_symbols(
+            "",
+            output_prefix,
+            items,
+            &function_names,
+            &mut symbols,
+            &mut property_categories,
+            &mut related_properties,
+        );
+
+        Self {
+            symbols,
+            related_properties,
+            property_categories,
+        }
+    }
+
+    fn collect_module_symbols(
+        module_name: &str,
+        output_prefix: &str,
+        items: &[Item],
+        function_names: &[String],
+        symbols: &mut HashMap<String, (String, String)>,
+        property_categories: &mut HashMap<String, String>,
+        related_properties: &mut HashMap<String, Vec<(String, String, String)>>,
+    ) {
         let mut current_category_slug = String::new();
+        let prefix = if output_prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", output_prefix.trim_matches('/'))
+        };
 
         for item in items {
             match item {
@@ -46,24 +148,69 @@ impl SymbolTable {
                 }
                 Item::TypeAlias { name, .. } => {
                     let anchor = name.to_lowercase();
-                    symbols.insert(name.clone(), ("types.md".into(), anchor));
+                    let file = format!("{prefix}types.md");
+                    symbols.insert(name.clone(), (file.clone(), anchor.clone()));
+                    if !module_name.is_empty() {
+                        symbols.insert(
+                            format!("{module_name}::{name}"),
+                            (file.clone(), anchor.clone()),
+                        );
+                    }
                 }
                 Item::EnumGroup {
                     type_name, variants, ..
                 } => {
                     let anchor = type_name.to_lowercase();
-                    symbols.insert(type_name.clone(), ("types.md".into(), anchor.clone()));
+                    let file = format!("{prefix}types.md");
+                    symbols.insert(type_name.clone(), (file.clone(), anchor.clone()));
+                    if !module_name.is_empty() {
+                        symbols.insert(
+                            format!("{module_name}::{type_name}"),
+                            (file.clone(), anchor.clone()),
+                        );
+                    }
                     for v in variants {
-                        symbols.insert(v.name.clone(), ("types.md".into(), anchor.clone()));
+                        symbols.insert(v.name.clone(), (file.clone(), anchor.clone()));
+                        if !module_name.is_empty() {
+                            symbols.insert(
+                                format!("{module_name}::{}", v.name),
+                                (file.clone(), anchor.clone()),
+                            );
+                        }
                     }
                 }
                 Item::RecordType { name, .. } => {
                     let anchor = name.to_lowercase();
-                    symbols.insert(name.clone(), ("types.md".into(), anchor));
+                    let file = format!("{prefix}types.md");
+                    symbols.insert(name.clone(), (file.clone(), anchor.clone()));
+                    if !module_name.is_empty() {
+                        symbols.insert(
+                            format!("{module_name}::{name}"),
+                            (file.clone(), anchor.clone()),
+                        );
+                    }
                 }
-                Item::Function { name, .. } => {
-                    let file = format!("functions/{name}.md");
-                    symbols.insert(name.clone(), (file, String::new()));
+                Item::Function {
+                    name,
+                    signature,
+                    branches,
+                    body,
+                    ..
+                } => {
+                    if !signature.contains("->") && branches.is_empty() {
+                        continue;
+                    }
+                    if is_simple_constructor(name, branches, body) {
+                        continue;
+                    }
+                    let file = format!("{prefix}functions/{name}.md");
+                    symbols.insert(name.clone(), (file.clone(), String::new()));
+                    if !module_name.is_empty() {
+                        symbols.insert(
+                            format!("{module_name}::{name}"),
+                            (file, String::new()),
+                        );
+                    }
                 }
                 Item::Property {
                     label,
@@ -72,17 +219,19 @@ impl SymbolTable {
                     doc,
                     ..
                 } => {
-                    let slug = &current_category_slug;
+                    let slug = if current_category_slug.is_empty() {
+                        "misc"
+                    } else {
+                        &current_category_slug
+                    };
                     let anchor = property_anchor(label, name);
-                    let file = format!("properties/{slug}.md");
+                    let file = format!("{prefix}properties/{slug}.md");
                     symbols.insert(label.clone(), (file.clone(), anchor.clone()));
-                    // Also register the full name (e.g., "KeyMonotonicity")
                     symbols.insert(name.clone(), (file.clone(), anchor));
-                    property_categories.insert(label.clone(), slug.clone());
+                    property_categories.insert(label.clone(), slug.to_string());
 
-                    // Back-link detection: find function names mentioned in body or doc.
                     let all_text = format!("{body} {}", doc.join(" "));
-                    for fn_name in &function_names {
+                    for fn_name in function_names {
                         if contains_word(&all_text, fn_name) {
                             related_properties
                                 .entry(fn_name.clone())
@@ -94,12 +243,6 @@ impl SymbolTable {
                 _ => {}
             }
         }
-
-        Self {
-            symbols,
-            related_properties,
-            property_categories,
-        }
     }
 
     /// Resolve cross-references as anchor-only links for single-file output.
@@ -107,11 +250,15 @@ impl SymbolTable {
         let mut syms: Vec<(&str, &(String, String))> = self.symbols.iter()
             .map(|(k, v)| (k.as_str(), v))
             .collect();
-        syms.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        syms.sort_by(|a, b| {
+            let a_qual = a.0.contains("::");
+            let b_qual = b.0.contains("::");
+            a_qual.cmp(&b_qual).then_with(|| b.0.len().cmp(&a.0.len()))
+        });
 
         let mut result = text.to_string();
         for (name, (_, anchor)) in &syms {
-            let pattern = format!(r"\b{}\b", regex::escape(name));
+            let pattern = symbol_pattern(name);
             let re = match Regex::new(&pattern) {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -126,7 +273,15 @@ impl SymbolTable {
             };
 
             let link = format!("[{name}](#{actual_anchor})");
-            result = re.replace_all(&result, link.as_str()).to_string();
+            if name.contains("::") {
+                result = re.replace_all(&result, link.as_str()).to_string();
+            } else {
+                result = re
+                    .replace_all(&result, |caps: &regex::Captures<'_>| {
+                        format!("{}{}", &caps[1], link)
+                    })
+                    .to_string();
+            }
         }
         result
     }
@@ -137,7 +292,11 @@ impl SymbolTable {
         let mut syms: Vec<(&str, &(String, String))> = self.symbols.iter()
             .map(|(k, v)| (k.as_str(), v))
             .collect();
-        syms.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        syms.sort_by(|a, b| {
+            let a_qual = a.0.contains("::");
+            let b_qual = b.0.contains("::");
+            a_qual.cmp(&b_qual).then_with(|| b.0.len().cmp(&a.0.len()))
+        });
 
         let mut result = text.to_string();
         for (name, (target_file, anchor)) in &syms {
@@ -146,7 +305,7 @@ impl SymbolTable {
                 continue;
             }
 
-            let pattern = format!(r"\b{}\b", regex::escape(name));
+            let pattern = symbol_pattern(name);
             let re = match Regex::new(&pattern) {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -159,14 +318,22 @@ impl SymbolTable {
                 format!("[{name}]({rel}#{anchor})")
             };
 
-            result = re.replace_all(&result, link.as_str()).to_string();
+            if name.contains("::") {
+                result = re.replace_all(&result, link.as_str()).to_string();
+            } else {
+                result = re
+                    .replace_all(&result, |caps: &regex::Captures<'_>| {
+                        format!("{}{}", &caps[1], link)
+                    })
+                    .to_string();
+            }
         }
 
         result
     }
 
     /// Compute relative path from current_file to target_file.
-    fn relative_path(from: &str, to: &str) -> String {
+    pub fn relative_path(from: &str, to: &str) -> String {
         let from_parts: Vec<&str> = from.split('/').collect();
         let to_parts: Vec<&str> = to.split('/').collect();
 
@@ -192,6 +359,32 @@ impl SymbolTable {
     }
 }
 
+/// Keep linker behavior aligned with renderer: simple tuple constructors such as
+/// `none`/`some` are not rendered as standalone function pages.
+fn is_simple_constructor(name: &str, branches: &[Branch], body: &str) -> bool {
+    if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+        return false;
+    }
+    if branches.len() > 1 {
+        return false;
+    }
+    if branches.iter().any(|b| b.condition.is_some()) {
+        return false;
+    }
+
+    let rhs = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let rhs = rhs
+        .find('=')
+        .map(|p| rhs[p + 1..].trim())
+        .unwrap_or(&rhs);
+    rhs.starts_with('(') && rhs.contains(',') && rhs.len() < 40
+}
+
 /// Derive a category slug from a section title like "Category A: Key Lifecycle Safety".
 fn category_slug(title: &str) -> String {
     // Strip "Category X: " prefix if present.
@@ -211,12 +404,58 @@ fn property_anchor(label: &str, name: &str) -> String {
     format!("{label_lower}--{name_kebab}")
 }
 
+fn symbol_pattern(name: &str) -> String {
+    let escaped = regex::escape(name);
+    if name.contains("::") {
+        escaped
+    } else {
+        format!(r"(^|[^:A-Za-z0-9_'])({escaped})\b")
+    }
+}
+
 /// Check if `text` contains `word` as a whole word (not part of a larger identifier).
-fn contains_word(text: &str, word: &str) -> bool {
+pub(crate) fn contains_word(text: &str, word: &str) -> bool {
     let pattern = format!(r"\b{}\b", regex::escape(word));
     Regex::new(&pattern)
         .map(|re| re.is_match(text))
         .unwrap_or(false)
+}
+
+/// Compute function→function cross-reference edges by scanning bodies.
+/// Only includes edges where both caller and callee appear in `fn_names`.
+pub fn function_call_graph(items: &[Item], fn_names: &[String]) -> Vec<(String, String)> {
+    let name_set: std::collections::HashSet<&str> =
+        fn_names.iter().map(|s| s.as_str()).collect();
+    let mut edges = Vec::new();
+    for item in items {
+        if let Item::Function {
+            name,
+            body,
+            branches,
+            ..
+        } = item
+        {
+            if !name_set.contains(name.as_str()) {
+                continue;
+            }
+            let mut search_text = body.clone();
+            for branch in branches {
+                if let Some(cond) = &branch.condition {
+                    search_text.push(' ');
+                    search_text.push_str(cond);
+                }
+                search_text.push(' ');
+                search_text.push_str(&branch.result);
+            }
+            for other in fn_names {
+                if other != name && contains_word(&search_text, other) {
+                    edges.push((name.clone(), other.clone()));
+                }
+            }
+        }
+    }
+    edges.sort();
+    edges
 }
 
 #[cfg(test)]
@@ -226,7 +465,7 @@ mod tests {
     use std::fs;
 
     fn load_items() -> Vec<Item> {
-        let src = fs::read_to_string("SDEP.cry").expect("SDEP.cry not found");
+        let src = fs::read_to_string("examples/SDEP.cry").expect("SDEP.cry not found");
         parse(&src)
     }
 
@@ -357,6 +596,31 @@ mod tests {
         assert_eq!(
             property_anchor("P23", "CanonicalizationInjective"),
             "p23--canonicalization-injective"
+        );
+    }
+
+    #[test]
+    fn build_for_modules_resolves_cross_module_links() {
+        let a_items = parse("module A where\n\nfoo : [8]\nfoo = 0\n");
+        let b_items = parse("module B where\n\nbar : [8]\nbar = A::foo\n");
+        let specs = vec![
+            ModuleSpec {
+                name: "A",
+                output_prefix: "A",
+                items: &a_items,
+            },
+            ModuleSpec {
+                name: "B",
+                output_prefix: "B",
+                items: &b_items,
+            },
+        ];
+
+        let st = SymbolTable::build_for_modules(&specs);
+        let resolved = st.resolve_links("A::foo", "B/functions/bar.md");
+        assert!(
+            resolved.contains("[A::foo](../../A/functions/foo.md)"),
+            "resolved = {resolved}"
         );
     }
 }

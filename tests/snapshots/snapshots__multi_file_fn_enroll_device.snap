@@ -4,20 +4,52 @@ expression: content
 ---
 # `enrollDevice`
 
-**Signature:** `fleetEnabled validMetadata authResult activationResult`
+### Signature
 
-4.2 enrollDevice (activate)
+**Parameters**
+- `fleetEnabled`: Bit
+- `validMetadata`: Bit
+- `authResult`: [AuthResult](../types.md#authresult)
+- `activationResult`: [ActivationResult](../types.md#activationresult)
+
+**Returns**
+- [EnrollmentResult](../types.md#enrollmentresult)
+
+<details><summary>Raw signature</summary>
+
+`Bit -> Bit -> AuthResult -> ActivationResult -> EnrollmentResult`
+
+</details>
+
+Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `[EnrollmentResult](../types.md#enrollmentresult)`. Defaults to `[ER_Unauthorized](../types.md#enrollmentresult)` when no prior condition matches.
 
 | # | Condition | Result |
 |---|-----------|--------|
 | 1 | ~ fleetEnabled | [ER_Disabled](../types.md#enrollmentresult) |
 | 2 | ~ validMetadata | [ER_Unauthorized](../types.md#enrollmentresult) |
 | 3 | authResult == [AR_Authenticated](../types.md#authresult) |  |
-| 4 | activationResult == [AC_Success](../types.md#activationresult) | [ER_Succeeded](../types.md#enrollmentresult) |
-| 5 | activationResult == [AC_AlreadyActive](../types.md#activationresult) | [ER_Unauthorized](../types.md#enrollmentresult) |
-| 6 | *(otherwise)* | [ER_InternalError](../types.md#enrollmentresult)) |
-| 7 | authResult == [AR_VaultUnavailable](../types.md#authresult) | [ER_InternalError](../types.md#enrollmentresult) |
-| 8 | *(otherwise)* | [ER_Unauthorized](../types.md#enrollmentresult) |
+| 4 | activationResult == [AC_AlreadyActive](../types.md#activationresult) | [ER_Unauthorized](../types.md#enrollmentresult) |
+| 5 | *(otherwise)* | [ER_InternalError](../types.md#enrollmentresult)) |
+| 6 | authResult == [AR_VaultUnavailable](../types.md#authresult) | [ER_InternalError](../types.md#enrollmentresult) |
+| 7 | *(otherwise)* | [ER_Unauthorized](../types.md#enrollmentresult) |
+
+```mermaid
+flowchart TD
+  Start(["enrollDevice"])
+  Start --> C0{"~ fleetEnabled"}
+  C0 -->|Yes| R0("ER_Disabled")
+  C0 -->|No| C1{"~ validMetadata"}
+  C1 -->|Yes| R1("ER_Unauthorized")
+  C1 -->|No| C2{"authResult == AR_Authenticated"}
+  C2 -->|No| C3{"activationResult == AC_AlreadyActive"}
+  C3 -->|Yes| R2("ER_Unauthorized")
+  C3 -->|No| R3("ER_InternalError)")
+  R3 --> C4{"authResult == AR_VaultUnavailable"}
+  C4 -->|Yes| R4("ER_InternalError")
+  C4 -->|No| R5("ER_Unauthorized")
+  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0
+  style Start fill:#1565C0,stroke:#0D47A1,color:#fff,stroke-width:2px
+```
 
 ### Related Properties
 - [P1 — Key Monotonicity](../properties/key-lifecycle-safety.md#p1--key-monotonicity)
