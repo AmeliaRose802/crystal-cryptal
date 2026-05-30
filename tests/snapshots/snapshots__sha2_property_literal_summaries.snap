@@ -1,0 +1,67 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# Miscellaneous
+
+### rotationEquivalenceRelationsHold — Rotation Equivalence Relations Hold
+
+Rotation equivalence relations hold: asserts `ROTL`{n} x == ROTR`{(w - n) % w} x` and `ROTR`{n} x == ROTL`{(w - n) % w} x` for all `x`.
+
+**Involved:** [`ROTL`](../functions/ROTL.md), [`ROTR`](../functions/ROTR.md)
+
+The Cryptol block below gives the exact Cryptol property checked by verification.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+left && right where
+left = ROTL`{n} x == ROTR`{(w - n) % w} x
+right = ROTR`{n} x == ROTL`{(w - n) % w} x
+```
+
+</details>
+
+### hexDigitsEncodeCorrectly — Hex Digits Encode Correctly
+
+Hex digits encode correctly: asserts `0x7 == 0b0111` and `0xa == 0b1010`.
+
+The Cryptol block below gives the exact Cryptol property checked by verification.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+(0x7 == 0b0111) && (0xa == 0b1010)
+```
+
+</details>
+
+### wordsEncodeCorrectly — Words Encode Correctly
+
+Words encode correctly: asserts `0xa103fe23 == 0b10100001000000111111111000100011` and `0xa103fe2332ef301a == 0b1010000100000011111111100010001100110010111011110011000000011010`.
+
+The Cryptol block below gives the exact Cryptol property checked by verification.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+short && long where
+short = 0xa103fe23 == 0b10100001000000111111111000100011
+long = 0xa103fe2332ef301a == 0b1010000100000011111111100010001100110010111011110011000000011010
+```
+
+</details>
+
+### integersEncodeCorrectly — Integers Encode Correctly
+
+Integers encode correctly: asserts `291 == 0x00000123`.
+
+The Cryptol block below gives the exact Cryptol property checked by verification.
+
+<details><summary>Formal property (Cryptol)</summary>
+
+```cryptol
+291 == 0x00000123
+```
+
+</details>

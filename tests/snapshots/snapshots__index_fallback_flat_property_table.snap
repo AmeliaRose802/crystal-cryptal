@@ -1,0 +1,14 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# FlatProps
+
+## Security Properties
+
+Properties are security/correctness claims checked against function behavior.
+
+| Property | Summary |
+|----------|---------|
+| [P1 — Hex](properties/misc.md#p1--hex) | Hex: asserts `0x7 == 0b0111`. |
+| [P2 — Int](properties/misc.md#p2--int) | Int: asserts `291 == 0x00000123`. |

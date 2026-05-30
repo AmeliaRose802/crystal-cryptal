@@ -408,6 +408,7 @@ fn parse_prim_or_foreign(text: &str, items: &mut Vec<Item>) {
             branches: Vec::new(),
             body: String::new(),
             doc: Vec::new(),
+            proof_status: None,
         });
     }
 }
@@ -507,6 +508,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                         branches: Vec::new(),
                         body: String::new(),
                         doc: Vec::new(),
+                        proof_status: None,
                     });
                 }
             }
@@ -526,6 +528,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                         branches: Vec::new(),
                         body: String::new(),
                         doc: Vec::new(),
+                        proof_status: None,
                     });
                 }
             }
@@ -567,6 +570,7 @@ fn parse_binding(text: &str, items: &mut Vec<Item>) {
         branches: extract_branches(rhs),
         body: text.to_string(),
         doc: Vec::new(),
+        proof_status: None,
     });
 }
 

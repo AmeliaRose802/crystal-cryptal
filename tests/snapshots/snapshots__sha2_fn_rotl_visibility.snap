@@ -1,0 +1,35 @@
+---
+source: tests/snapshots.rs
+expression: rotl
+---
+# `ROTL`
+
+**Visibility:** Private
+
+### Signature
+
+Cryptal describes a contract that the function implementation must comply with. SAW proves that the implementation matches this contract.
+
+```cryptol
+{n} (n < w) => [w] -> [w]
+```
+
+Type parameters are compile-time generic inputs (for example widths and lengths), not runtime function arguments.
+
+| Component | Details |
+|-----------|---------|
+| Type Parameters | `n` |
+| Constraints | n < w |
+| Parameters | `x`: [w] |
+| Returns | [w] |
+
+Computes a sequence of w bits from `x`.
+
+### Related Properties
+- [rotationEquivalenceRelationsHold — Rotation Equivalence Relations Hold](../properties/misc.md#rotationequivalencerelationshold--rotation-equivalence-relations-hold)
+
+### Cryptol Definition
+
+```cryptol
+ROTL x = x <<< `n
+```

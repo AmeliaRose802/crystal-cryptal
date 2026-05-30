@@ -23,9 +23,10 @@ fn load_sdep_with_proofs() -> (Vec<Item>, SymbolTable) {
             proof_status,
             ..
         } = item
-            && let Some(status) = manifest.get(label)
         {
-            *proof_status = Some(status.clone());
+            if let Some(status) = manifest.properties.get(label) {
+                *proof_status = Some(status.clone());
+            }
         }
     }
     let symbols = SymbolTable::build(&items);

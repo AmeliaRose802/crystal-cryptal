@@ -233,7 +233,8 @@ expression: json
         }
       ],
       "body": "none = (False, zero)",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -247,7 +248,8 @@ expression: json
         }
       ],
       "body": "some u = (True, u)",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -308,7 +310,8 @@ expression: json
         }
       ],
       "body": "provisionKey fleetEnabled validRequest vaultResult keyIsActive =\n  if ~ fleetEnabled        then PR_Disabled\n   | ~ validRequest        then PR_BadRequest\n   | vaultResult != KV_Ok  then PR_InternalError\n   | keyIsActive           then PR_Unauthorized\n  else                          PR_Succeeded",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -346,7 +349,8 @@ expression: json
         }
       ],
       "body": "enrollDevice fleetEnabled validMetadata authResult activationResult =\n  if ~ fleetEnabled                       then ER_Disabled\n   | ~ validMetadata                      then ER_Unauthorized\n   | authResult == AR_Authenticated       then\n        (if activationResult == AC_Success       then ER_Succeeded\n          | activationResult == AC_AlreadyActive then ER_Unauthorized\n         else                                         ER_InternalError)\n   | authResult == AR_VaultUnavailable    then ER_InternalError\n  else                                         ER_Unauthorized",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -360,7 +364,8 @@ expression: json
         }
       ],
       "body": "authenticate dateValid signatureValid claimsValid =\n  dateValid && signatureValid && claimsValid",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -392,7 +397,8 @@ expression: json
         }
       ],
       "body": "isValidRequestDate requestTs currentTime windowSeconds =\n  (requestTs <= currentTime)\n  && ((currentTime - requestTs) <= windowSeconds)",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -435,7 +441,8 @@ expression: json
       "body": "hmacSha256 k r = k ^ r ^ (r <<< 1)   // placeholder; specs only use equality",
       "doc": [
         "Uninterpreted in proofs (SAW can treat this as a Cryptol primitive)."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -449,7 +456,8 @@ expression: json
         }
       ],
       "body": "isValidSignature key req providedSig =\n  hmacSha256 key req == providedSig",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -483,7 +491,8 @@ expression: json
         }
       ],
       "body": "enforceAccess mode decision =\n  if mode == AM_Off then (True, False)\n   | mode == AM_Audit then\n        (if decision == AD_Deny then (True, True) else (True, False))\n   | mode == AM_Enforce then\n        (if decision == AD_Allow  then (True,  False)\n          | decision == AD_Deny   then (False, True)\n         else                          (True,  False))\n  else (True, False)   // unreachable for well-formed modes",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -497,7 +506,8 @@ expression: json
         }
       ],
       "body": "getStatus fleetEnabled hasKey keyIsActive keyId =\n  { fleetMode = if fleetEnabled then FM_Enabled else FM_Disabled\n  , hasKey    = hasKey\n  , keyId     = if keyIsActive then some keyId else none\n  , isActive  = keyIsActive\n  }",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -955,7 +965,8 @@ expression: json
         "first n bytes); making it explicit keeps logically-distinct requests",
         "distinct as Cryptol values, so any collision the solver finds is a *real*",
         "one."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -977,7 +988,8 @@ expression: json
         "The Cryptol bound uses an 8-bit length tag (sufficient for FL <= 255);",
         "production uses a 64-bit big-endian tag (sufficient for any std::size_t /",
         "usize field). The injectivity argument is identical for both widths."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -1223,7 +1235,8 @@ expression: json
         }
       ],
       "body": "fieldNormalized f =\n  (f.len <= (`FLs : [IW])) /\\\n  and [ (i >= f.len) ==> ((f.buf @ i) == 0)\n      | i <- ([0 .. FLs - 1] : [FLs][IW]) ]",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -1288,7 +1301,8 @@ expression: json
         }
       ],
       "body": "requestNormalized r =\n  fieldNormalized r.method /\\\n  fieldNormalized r.path /\\\n  fieldNormalized r.body /\\\n  and [ fieldNormalized h.name /\\ fieldNormalized h.value\n      | h <- r.hdrs ]",
-      "doc": []
+      "doc": [],
+      "proof_status": null
     }
   },
   {
@@ -1304,7 +1318,8 @@ expression: json
       "body": "lpField f = [f.len] # f.buf",
       "doc": [
         "Length-prefix a Field as [len-byte] # buf."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -1323,7 +1338,8 @@ expression: json
         "if it is the auth header. Fixed output size keeps canonicalizeS Cryptol-",
         "statable; the placeholder content is irrelevant because the encoder",
         "elides auth headers regardless of their value."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -1341,7 +1357,8 @@ expression: json
         "Concrete canonicalize: length-prefixed method, body, headers (with",
         "auth-header exclusion), path, then the 8-byte big-endian timestamp.",
         "Mirrors the production C++/Rust encoder shape."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {
@@ -1400,7 +1417,8 @@ expression: json
         "to `isValidRequestDate`. The Cryptol model below mirrors that: the",
         "verifier extracts `r.timestamp` and the caller-supplied parameter (if",
         "any) is unused — a pure transport-layer artefact."
-      ]
+      ],
+      "proof_status": null
     }
   },
   {

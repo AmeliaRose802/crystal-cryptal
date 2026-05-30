@@ -1,0 +1,96 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# Primitive::Keyless::Hash::SHA2::Specification
+
+## Module Parameters
+
+Module parameters configure compile-time specialization for this module (for example widths and initial constants).
+
+| Name | Kind | Signature | Notes |
+|------|------|-----------|-------|
+| `w` | Type Parameter | `#` | Length of words, in bits, that are used during hashing. |
+| `DigestSize` | Type Parameter | `#` | Length of the message digest produced by the hash algorithm. |
+| `H0` | Value Parameter | `[8][w]` | Initial hash value. |
+
+### Parameter Constraints
+
+<details><summary>Constraint 1: `w` is a multiple of `32`, and `w` is at least `32`, and `w` is at most `64`.</summary>
+
+Formal constraint: `(w % 32 == 0, 32 <= w, 64 >= w)`
+
+</details>
+
+<details><summary>Constraint 2: `8 * w` is greater than or equal to `DigestSize`, and `DigestSize` is a multiple of `8`.</summary>
+
+Formal constraint: `(8 * w >= DigestSize, DigestSize % 8 == 0)`
+
+</details>
+
+## Types
+
+Type definitions used by functions/properties: [types](types.md)
+
+## Functions
+
+Functions define behavior and decision logic: [functions](functions/index.md)
+
+### Call Graph
+
+```mermaid
+graph LR
+  Ch["Ch"]
+  click Ch "functions/Ch.md" "Ch"
+  Maj["Maj"]
+  click Maj "functions/Maj.md" "Maj"
+  ROTL["ROTL"]
+  click ROTL "functions/ROTL.md" "ROTL"
+  ROTR["ROTR"]
+  click ROTR "functions/ROTR.md" "ROTR"
+  SHR["SHR"]
+  click SHR "functions/SHR.md" "SHR"
+  Sigma0["Sigma0"]:::stub
+  click Sigma0 "functions/Sigma0.md" "Sigma0"
+  Sigma1["Sigma1"]:::stub
+  click Sigma1 "functions/Sigma1.md" "Sigma1"
+  hash["hash"]
+  click hash "functions/hash.md" "hash"
+  hashBytes["hashBytes"]
+  click hashBytes "functions/hashBytes.md" "hashBytes"
+  pad["pad"]
+  click pad "functions/pad.md" "pad"
+  parse["parse"]
+  click parse "functions/parse.md" "parse"
+  rotationEquivalenceRelationsHold["rotationEquivalenceRelationsHold"]:::stub
+  click rotationEquivalenceRelationsHold "functions/rotationEquivalenceRelationsHold.md" "rotationEquivalenceRelationsHold"
+  sigma0["sigma0"]:::stub
+  click sigma0 "functions/sigma0.md" "sigma0"
+  sigma1["sigma1"]:::stub
+  click sigma1 "functions/sigma1.md" "sigma1"
+  hash --> Ch
+  hash --> Maj
+  hash --> Sigma0
+  hash --> Sigma1
+  hash --> pad
+  hash --> parse
+  hash --> sigma0
+  hash --> sigma1
+  hashBytes --> hash
+  classDef default fill:#e2e8f0,stroke:#1e293b,stroke-width:1.8px,color:#0f172a
+  classDef decision fill:#d1fae5,stroke:#065f46,stroke-width:1.8px,color:#022c22
+  classDef stub fill:#fee2e2,stroke:#991b1b,stroke-width:1.8px,stroke-dasharray: 5 5,color:#450a0a
+```
+
+**Key:** 🔵 function · 🟠 stub
+
+## Security Properties
+
+Properties are security/correctness claims checked against function behavior.
+
+| Property | Summary |
+|----------|---------|
+| [rotationEquivalenceRelationsHold — Rotation Equivalence Relations Hold](properties/misc.md#rotationequivalencerelationshold--rotation-equivalence-relations-hold) | Rotation equivalence relations hold: asserts `ROTL`{n} x == ROTR`{(w - n) % w} x` and `ROTR`{n} x == ROTL`{(w - n) % w} x` for all `x`. |
+| [hexDigitsEncodeCorrectly — Hex Digits Encode Correctly](properties/misc.md#hexdigitsencodecorrectly--hex-digits-encode-correctly) | Hex digits encode correctly: asserts `0x7 == 0b0111` and `0xa == 0b1010`. |
+| [wordsEncodeCorrectly — Words Encode Correctly](properties/misc.md#wordsencodecorrectly--words-encode-correctly) | Words encode correctly: asserts `0xa103fe23 == 0b10100001000000111111111000100011` and `0xa103fe2332ef301a == 0b1010000100000011111111100010001100110010111011110011000000011010`. |
+| [integersEncodeCorrectly — Integers Encode Correctly](properties/misc.md#integersencodecorrectly--integers-encode-correctly) | Integers encode correctly: asserts `291 == 0x00000123`. |

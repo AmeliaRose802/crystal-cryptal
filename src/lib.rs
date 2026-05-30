@@ -5,3 +5,4 @@ pub mod linker;
 pub mod describe;
 pub mod render_md;
 pub mod render_json;
+pub mod saw_log;

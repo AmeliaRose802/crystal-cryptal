@@ -45,6 +45,7 @@ mod tests {
                 branches: vec![],
                 body: "\\x -> x".into(),
                 doc: vec![],
+                proof_status: None,
             },
         ];
 

@@ -1,0 +1,70 @@
+---
+source: tests/snapshots.rs
+expression: fn_index
+---
+# Functions
+
+| Function | Visibility | Proof | Description |
+|----------|------------|-------|-------------|
+| [ROTL](ROTL.md) | Private |  | Computes a sequence of w bits from `x`. |
+| [ROTR](ROTR.md) | Private |  | Computes a sequence of w bits from `x`. |
+| [rotationEquivalenceRelationsHold](rotationEquivalenceRelationsHold.md) | Private | <abbr title="Uninterpreted stub: no Cryptol body. Treated as an opaque primitive in proofs — no concrete behavior is defined.">🧩 Stub</abbr> |  |
+| [SHR](SHR.md) | Private |  | Computes a sequence of w bits from `x`. |
+| [Ch](Ch.md) | Private |  | Computes a sequence of w bits from `x`, `y`, and `z`. |
+| [Maj](Maj.md) | Private |  | Computes a sequence of w bits from `x`, `y`, and `z`. |
+| [Sigma0](Sigma0.md) | Private | <abbr title="Uninterpreted stub: no Cryptol body. Treated as an opaque primitive in proofs — no concrete behavior is defined.">🧩 Stub</abbr> |  |
+| [Sigma1](Sigma1.md) | Private | <abbr title="Uninterpreted stub: no Cryptol body. Treated as an opaque primitive in proofs — no concrete behavior is defined.">🧩 Stub</abbr> |  |
+| [sigma0](sigma0.md) | Private | <abbr title="Uninterpreted stub: no Cryptol body. Treated as an opaque primitive in proofs — no concrete behavior is defined.">🧩 Stub</abbr> |  |
+| [sigma1](sigma1.md) | Private | <abbr title="Uninterpreted stub: no Cryptol body. Treated as an opaque primitive in proofs — no concrete behavior is defined.">🧩 Stub</abbr> |  |
+| [pad](pad.md) | Private |  | Computes a sequence of NumBlocks L * BlockSize bits from `M`. |
+| [parse](parse.md) | Private |  | Computes a sequence of N values, each BlockSize bits wide from `M`. |
+| [hash](hash.md) | Public |  | Secure hash function. |
+| [hashBytes](hashBytes.md) | Public |  | Secure hash function, computed over bytes. |
+
+### Call Graph
+
+```mermaid
+graph LR
+  Ch["Ch"]
+  click Ch "functions/Ch.md" "Ch"
+  Maj["Maj"]
+  click Maj "functions/Maj.md" "Maj"
+  ROTL["ROTL"]
+  click ROTL "functions/ROTL.md" "ROTL"
+  ROTR["ROTR"]
+  click ROTR "functions/ROTR.md" "ROTR"
+  SHR["SHR"]
+  click SHR "functions/SHR.md" "SHR"
+  Sigma0["Sigma0"]:::stub
+  click Sigma0 "functions/Sigma0.md" "Sigma0"
+  Sigma1["Sigma1"]:::stub
+  click Sigma1 "functions/Sigma1.md" "Sigma1"
+  hash["hash"]
+  click hash "functions/hash.md" "hash"
+  hashBytes["hashBytes"]
+  click hashBytes "functions/hashBytes.md" "hashBytes"
+  pad["pad"]
+  click pad "functions/pad.md" "pad"
+  parse["parse"]
+  click parse "functions/parse.md" "parse"
+  rotationEquivalenceRelationsHold["rotationEquivalenceRelationsHold"]:::stub
+  click rotationEquivalenceRelationsHold "functions/rotationEquivalenceRelationsHold.md" "rotationEquivalenceRelationsHold"
+  sigma0["sigma0"]:::stub
+  click sigma0 "functions/sigma0.md" "sigma0"
+  sigma1["sigma1"]:::stub
+  click sigma1 "functions/sigma1.md" "sigma1"
+  hash --> Ch
+  hash --> Maj
+  hash --> Sigma0
+  hash --> Sigma1
+  hash --> pad
+  hash --> parse
+  hash --> sigma0
+  hash --> sigma1
+  hashBytes --> hash
+  classDef default fill:#e2e8f0,stroke:#1e293b,stroke-width:1.8px,color:#0f172a
+  classDef decision fill:#d1fae5,stroke:#065f46,stroke-width:1.8px,color:#022c22
+  classDef stub fill:#fee2e2,stroke:#991b1b,stroke-width:1.8px,stroke-dasharray: 5 5,color:#450a0a
+```
+
+**Key:** 🔵 function · 🟠 stub

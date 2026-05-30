@@ -40,6 +40,8 @@ const TYPE_DOC_INTERNAL_MARKERS: &[&str] = &[
 pub struct RenderOptions {
     pub no_details: bool,
     pub title_override: Option<String>,
+    /// Emit DocFX-compatible front-matter and toc.yml files.
+    pub docfx: bool,
 }
 
 /// Render a complete set of Markdown files to the output directory.
@@ -62,17 +64,35 @@ pub fn render_multi_file_with_prefix(
     fs::create_dir_all(output_dir.join("functions"))?;
     fs::create_dir_all(output_dir.join("properties"))?;
 
-    let index = render_index(items, symbols, options, path_prefix);
+    let module_name = items
+        .iter()
+        .find_map(|i| if let Item::Module { name, .. } = i { Some(name.clone()) } else { None })
+        .unwrap_or_else(|| "Specification".into());
+    let title = options.title_override.as_deref().unwrap_or(&module_name).to_string();
+
+    let mut index = render_index(items, symbols, options, path_prefix);
+    if options.docfx {
+        index = format!("{}{}", docfx_frontmatter(&module_name, &title), index);
+    }
     fs::write(output_dir.join("index.md"), index)?;
 
     let types = render_types(items, symbols, path_prefix);
     fs::write(output_dir.join("types.md"), types)?;
 
-    let functions_index = render_functions_index(items, symbols, options, path_prefix);
+    let mut functions_index = render_functions_index(items, symbols, options, path_prefix);
+    if options.docfx {
+        let fn_uid = format!("{module_name}.functions");
+        functions_index = format!("{}{}", docfx_frontmatter(&fn_uid, "Functions"), functions_index);
+    }
     fs::write(output_dir.join("functions/index.md"), functions_index)?;
 
     render_function_files(items, symbols, output_dir, options, path_prefix)?;
     render_property_files(items, symbols, output_dir, options, path_prefix)?;
+
+    if options.docfx {
+        let toc = render_docfx_toc(&title, items);
+        fs::write(output_dir.join("toc.yml"), toc)?;
+    }
 
     Ok(())
 }
@@ -191,9 +211,16 @@ pub fn render_single_file(
                 branches,
                 body,
                 doc,
+                proof_status,
             } = item
             {
-                let _ = writeln!(out, "### `{name}`\n");
+                let badge = proof_badge(proof_status);
+                let badge_str = if badge.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {badge}")
+                };
+                let _ = writeln!(out, "### `{name}`{badge_str}\n");
 
                 let parsed_sig = parse_signature(signature);
                 let param_names = extract_param_names(body, name);
@@ -572,6 +599,7 @@ fn render_functions_index(
                 branches,
                 body,
                 doc,
+                ..
             } => {
                 if !signature.contains("->") && branches.is_empty() {
                     return None;
@@ -746,6 +774,7 @@ fn render_function_files(
             branches,
             body,
             doc,
+            proof_status,
         } = item
         {
             // Skip enum constants that were absorbed but left as functions
@@ -759,7 +788,13 @@ fn render_function_files(
             let current_file = prefixed_file(path_prefix, &format!("functions/{name}.md"));
             let mut out = String::new();
 
-            let _ = writeln!(out, "# `{name}`\n");
+            let badge = proof_badge(proof_status);
+            let badge_str = if badge.is_empty() {
+                String::new()
+            } else {
+                format!("  {badge}")
+            };
+            let _ = writeln!(out, "# `{name}`{badge_str}\n");
 
             // Structured signature with cross-linked types.
             let parsed_sig = parse_signature(signature);
@@ -955,6 +990,56 @@ fn render_property_files(
     }
 
     Ok(())
+}
+
+// ── DocFX helpers ────────────────────────────────────────────────────────────
+
+/// Emit a DocFX YAML front-matter block for a Markdown page.
+fn docfx_frontmatter(uid: &str, title: &str) -> String {
+    format!("---\nuid: {uid}\ntitle: {title}\n---\n\n")
+}
+
+/// Emit a `toc.yml` for a module's output directory.
+fn render_docfx_toc(title: &str, items: &[Item]) -> String {
+    let has_functions = items.iter().any(|i| matches!(i, Item::Function { .. }));
+    let has_types = items.iter().any(|i| {
+        matches!(i, Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. })
+    });
+
+    // Collect property categories (slug, title) in order.
+    let mut cats: Vec<(String, String)> = Vec::new();
+    let mut cur_title = String::new();
+    let mut cur_slug = String::new();
+    for item in items {
+        if let Item::Section { level: 3, title: sec_title, .. } = item {
+            cur_title = strip_category_prefix(sec_title);
+            cur_slug = category_slug_from_title(sec_title);
+        }
+        if let Item::Property { label, .. } = item {
+            let slug = if cur_slug.is_empty() { "misc".to_string() } else { cur_slug.clone() };
+            let ttl = if cur_title.is_empty() { "Miscellaneous".to_string() } else { cur_title.clone() };
+            if !cats.iter().any(|(s, _)| s == &slug) {
+                cats.push((slug, ttl));
+            }
+            let _ = label; // suppress unused warning
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("- name: {title}\n  href: index.md\n"));
+    if has_types {
+        out.push_str("- name: Types\n  href: types.md\n");
+    }
+    if has_functions {
+        out.push_str("- name: Functions\n  href: functions/index.md\n");
+    }
+    if !cats.is_empty() {
+        out.push_str("- name: Properties\n  items:\n");
+        for (slug, cat_title) in &cats {
+            out.push_str(&format!("  - name: {cat_title}\n    href: properties/{slug}.md\n"));
+        }
+    }
+    out
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1761,6 +1846,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(index.contains("# SDEP"), "index should contain module title");
@@ -1773,6 +1859,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -1788,6 +1875,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -1850,6 +1938,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -1876,6 +1965,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: Some("My Custom Title".into()),
+            docfx: false,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -1891,6 +1981,7 @@ mod tests {
         let options = RenderOptions {
             no_details: true,
             title_override: None,
+            docfx: false,
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test_nodetails");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -1926,6 +2017,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(doc.contains("# SDEP"), "should contain module title");
@@ -1942,6 +2034,7 @@ mod tests {
         let options = RenderOptions {
             no_details: false,
             title_override: None,
+            docfx: false,
         };
         let doc = render_single_file(&items, &symbols, &options);
         // Should NOT contain relative file links
@@ -1971,6 +2064,7 @@ mod tests {
         let options = RenderOptions {
             no_details: true,
             title_override: None,
+            docfx: false,
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(

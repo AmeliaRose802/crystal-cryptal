@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Proof status for a property, populated from an external proof manifest.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProofStatus {
     Proven {
         solver: String,
@@ -69,6 +69,7 @@ pub enum Item {
         branches: Vec<Branch>,
         body: String,
         doc: Vec<String>,
+        proof_status: Option<ProofStatus>,
     },
     Property {
         label: String,
@@ -124,14 +125,60 @@ impl From<ManifestEntry> for ProofStatus {
     }
 }
 
+/// Extended manifest top-level structure (new format).
+#[derive(Debug, Deserialize)]
+struct ExtendedManifest {
+    properties: HashMap<String, ManifestEntry>,
+    functions: Option<HashMap<String, ManifestEntry>>,
+}
+
+/// Loaded proof manifest containing per-property and per-function statuses.
+#[derive(Debug, Default)]
+pub struct ProofManifest {
+    pub properties: HashMap<String, ProofStatus>,
+    pub functions: HashMap<String, ProofStatus>,
+}
+
 /// Load proof status from a JSON manifest file.
-/// The manifest maps property labels (e.g. "P1") to proof status entries.
-pub fn load_proof_manifest(path: &Path) -> Result<HashMap<String, ProofStatus>, String> {
+///
+/// Accepts two formats:
+/// - Extended: `{"properties": {...}, "functions": {...}}`
+/// - Flat (legacy): `{"P1": {...}, "P2": {...}}` — treated as properties only
+pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read manifest {}: {e}", path.display()))?;
-    let raw: HashMap<String, ManifestEntry> =
+    let value: serde_json::Value =
         serde_json::from_str(&contents).map_err(|e| format!("failed to parse manifest: {e}"))?;
-    Ok(raw.into_iter().map(|(k, v)| (k, v.into())).collect())
+
+    // Extended format: top-level object has a "properties" key.
+    if value.get("properties").is_some() {
+        let manifest: ExtendedManifest = serde_json::from_value(value)
+            .map_err(|e| format!("failed to parse manifest: {e}"))?;
+        let properties = manifest
+            .properties
+            .into_iter()
+            .map(|(k, v)| (k, ProofStatus::from(v)))
+            .collect();
+        let functions = manifest
+            .functions
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k, ProofStatus::from(v)))
+            .collect();
+        return Ok(ProofManifest { properties, functions });
+    }
+
+    // Flat (legacy) format: treat entire object as properties map.
+    let flat: HashMap<String, ManifestEntry> = serde_json::from_value(value)
+        .map_err(|e| format!("failed to parse manifest (flat format): {e}"))?;
+    let properties = flat
+        .into_iter()
+        .map(|(k, v)| (k, ProofStatus::from(v)))
+        .collect();
+    Ok(ProofManifest {
+        properties,
+        functions: HashMap::new(),
+    })
 }
 
 #[cfg(test)]
@@ -175,6 +222,7 @@ mod tests {
                 }],
                 body: "x + y".into(),
                 doc: vec![],
+                proof_status: None,
             },
             Item::Property {
                 label: "P1".into(),
@@ -200,16 +248,20 @@ mod tests {
     #[test]
     fn proof_manifest_deserialization() {
         let json = r#"{
-            "P1":  { "status": "proven", "solver": "z3", "time_secs": 0.42 },
-            "P8":  { "status": "assumed" },
-            "P22": { "status": "not_attempted" },
-            "P99": { "status": "failed", "reason": "counterexample found" }
+            "properties": {
+                "P1":  { "status": "proven", "solver": "z3", "time_secs": 0.42 },
+                "P8":  { "status": "assumed" },
+                "P22": { "status": "not_attempted" },
+                "P99": { "status": "failed", "reason": "counterexample found" }
+            }
         }"#;
 
-        let raw: HashMap<String, ManifestEntry> =
-            serde_json::from_str(json).expect("parse manifest");
-        let map: HashMap<String, ProofStatus> =
-            raw.into_iter().map(|(k, v)| (k, v.into())).collect();
+        let manifest: ExtendedManifest = serde_json::from_str(json).expect("parse manifest");
+        let map: HashMap<String, ProofStatus> = manifest
+            .properties
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
 
         assert_eq!(map.len(), 4);
         assert!(matches!(
