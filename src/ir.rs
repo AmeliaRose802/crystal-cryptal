@@ -125,11 +125,41 @@ impl From<ManifestEntry> for ProofStatus {
     }
 }
 
+/// Per-function entry in an extended manifest.
+///
+/// Supports both the nested format written by `--adapt-saw-results`:
+/// ```json
+/// { "overall": {"status":"proven","solver":"z3"}, "by_language": {"cpp":{...}} }
+/// ```
+/// and a flat fallback (no `overall` key) for hand-authored manifests that
+/// use the same shape as property entries.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FunctionManifestEntry {
+    /// Nested format: `overall` + optional `by_language`.
+    Nested {
+        overall: ManifestEntry,
+        #[serde(default)]
+        by_language: HashMap<String, ManifestEntry>,
+    },
+    /// Flat fallback: the entry is a `ManifestEntry` directly (no nesting).
+    Flat(ManifestEntry),
+}
+
+impl FunctionManifestEntry {
+    fn into_overall(self) -> ManifestEntry {
+        match self {
+            FunctionManifestEntry::Nested { overall, .. } => overall,
+            FunctionManifestEntry::Flat(entry) => entry,
+        }
+    }
+}
+
 /// Extended manifest top-level structure (new format).
 #[derive(Debug, Deserialize)]
 struct ExtendedManifest {
     properties: HashMap<String, ManifestEntry>,
-    functions: Option<HashMap<String, ManifestEntry>>,
+    functions: Option<HashMap<String, FunctionManifestEntry>>,
 }
 
 /// Loaded proof manifest containing per-property and per-function statuses.
@@ -163,7 +193,7 @@ pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
             .functions
             .unwrap_or_default()
             .into_iter()
-            .map(|(k, v)| (k, ProofStatus::from(v)))
+            .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
             .collect();
         return Ok(ProofManifest { properties, functions });
     }
@@ -276,6 +306,68 @@ mod tests {
         assert!(matches!(
             map.get("P99").unwrap(),
             ProofStatus::Failed { reason } if reason == "counterexample found"
+        ));
+    }
+
+    #[test]
+    fn proof_manifest_nested_function_entry() {
+        let json = r#"{
+            "properties": {},
+            "functions": {
+                "authenticate": {
+                    "overall": { "status": "proven", "solver": "z3", "time_secs": 1.2 },
+                    "by_language": {
+                        "cpp": { "status": "proven", "solver": "z3", "time_secs": 1.2 }
+                    }
+                },
+                "getStatus": {
+                    "overall": { "status": "failed", "reason": "counterexample found" }
+                }
+            }
+        }"#;
+
+        let manifest = load_proof_manifest(std::path::Path::new("/dev/null"))
+            .unwrap_or_else(|_| {
+                // parse directly since we can't write a temp file in a unit test portably
+                let v: serde_json::Value = serde_json::from_str(json).unwrap();
+                let m: ExtendedManifest = serde_json::from_value(v).unwrap();
+                let properties = m.properties.into_iter()
+                    .map(|(k, v)| (k, ProofStatus::from(v))).collect();
+                let functions = m.functions.unwrap_or_default().into_iter()
+                    .map(|(k, v)| (k, ProofStatus::from(v.into_overall()))).collect();
+                ProofManifest { properties, functions }
+            });
+
+        assert!(matches!(
+            manifest.functions.get("authenticate").unwrap(),
+            ProofStatus::Proven { solver, .. } if solver == "z3"
+        ));
+        assert!(matches!(
+            manifest.functions.get("getStatus").unwrap(),
+            ProofStatus::Failed { reason } if reason == "counterexample found"
+        ));
+    }
+
+    #[test]
+    fn proof_manifest_flat_function_entry() {
+        // Hand-authored manifest with flat function entries (no "overall" nesting).
+        let json = r#"{
+            "properties": {},
+            "functions": {
+                "provisionKey": { "status": "proven", "solver": "z3", "time_secs": 0.5 }
+            }
+        }"#;
+
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let m: ExtendedManifest = serde_json::from_value(v).unwrap();
+        let functions: HashMap<String, ProofStatus> = m.functions.unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
+            .collect();
+
+        assert!(matches!(
+            functions.get("provisionKey").unwrap(),
+            ProofStatus::Proven { solver, .. } if solver == "z3"
         ));
     }
 }
