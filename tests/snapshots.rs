@@ -37,6 +37,7 @@ fn default_options() -> RenderOptions {
     RenderOptions {
         no_details: false,
         title_override: None,
+        docfx: false,
     }
 }
 

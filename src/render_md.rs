@@ -10,7 +10,7 @@ use convert_case::{Case, Casing};
 
 use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::{Branch, Item, ProofStatus};
-use crate::linker::{function_call_graph, SymbolTable};
+use crate::linker::{function_call_graph, sanitize_slug, SymbolTable};
 
 const TYPE_DOC_INTERNAL_MARKERS: &[&str] = &[
     "counterexample",
@@ -212,13 +212,16 @@ pub fn render_single_file(
                 body,
                 doc,
                 proof_status,
+                is_private,
             } = item
             {
                 let badge = proof_badge(proof_status);
-                let badge_str = if badge.is_empty() {
-                    String::new()
-                } else {
-                    format!("  {badge}")
+                let private_badge = if *is_private { "`internal helper`" } else { "" };
+                let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
+                    (false, false) => format!("  {badge}  {private_badge}"),
+                    (false, true) => format!("  {badge}"),
+                    (true, false) => format!("  {private_badge}"),
+                    (true, true) => String::new(),
                 };
                 let _ = writeln!(out, "### `{name}`{badge_str}\n");
 
@@ -775,6 +778,7 @@ fn render_function_files(
             body,
             doc,
             proof_status,
+            is_private,
         } = item
         {
             // Skip enum constants that were absorbed but left as functions
@@ -789,10 +793,12 @@ fn render_function_files(
             let mut out = String::new();
 
             let badge = proof_badge(proof_status);
-            let badge_str = if badge.is_empty() {
-                String::new()
-            } else {
-                format!("  {badge}")
+            let private_badge = if *is_private { "`internal helper`" } else { "" };
+            let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
+                (false, false) => format!("  {badge}  {private_badge}"),
+                (false, true) => format!("  {badge}"),
+                (true, false) => format!("  {private_badge}"),
+                (true, true) => String::new(),
             };
             let _ = writeln!(out, "# `{name}`{badge_str}\n");
 
@@ -866,7 +872,10 @@ fn render_function_files(
                 let _ = writeln!(out, "</details>");
             }
 
-            fs::write(output_dir.join("functions").join(format!("{name}.md")), out)?;
+            let fn_path = output_dir.join("functions").join(format!("{name}.md"));
+            fs::write(&fn_path, out).map_err(|e| {
+                io::Error::new(e.kind(), format!("{}: {e}", fn_path.display()))
+            })?;
         }
     }
     Ok(())
@@ -983,10 +992,10 @@ fn render_property_files(
             }
         }
 
-        fs::write(
-            output_dir.join("properties").join(format!("{cat_slug}.md")),
-            out,
-        )?;
+        let prop_path = output_dir.join("properties").join(format!("{cat_slug}.md"));
+        fs::write(&prop_path, out).map_err(|e| {
+            io::Error::new(e.kind(), format!("{}: {e}", prop_path.display()))
+        })?;
     }
 
     Ok(())
@@ -1303,7 +1312,7 @@ fn is_simple_constructor(name: &str, _signature: &str, branches: &[Branch], body
 /// Derive category slug from section title.
 fn category_slug_from_title(title: &str) -> String {
     let payload = strip_category_prefix(title);
-    payload.to_case(Case::Kebab)
+    sanitize_slug(&payload.to_case(Case::Kebab))
 }
 
 #[derive(Debug, Default)]

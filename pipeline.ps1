@@ -173,7 +173,6 @@ if (-not $SkipVerify -and $Impl -ne "") {
     } else {
         Join-Path $SawSpecGenRoot "verify.ps1"
     }
-    $implParam = if ($ImplLang -eq "rust") { "-RustFile" } else { "-CppFile" }
 
     # ── Step 2: Run saw-spec-gen per function ─────────────────────────────────
 
@@ -192,25 +191,24 @@ if (-not $SkipVerify -and $Impl -ne "") {
 
         Write-Host "  Verifying $name ..." -NoNewline
         try {
-            # Build optional clang pass-through args (C++ only; verify-rust.ps1
-            # does not accept these and Rust compilation is fully self-contained).
-            # Use a hashtable splat (@{}) so array-valued parameters are bound
-            # correctly — a flat array splat collapses named/value pairs when the
-            # value is itself an array, breaking parameter binding.
-            $verifyExtraArgs = @{}
+            # Build the hashtable-splatted arg set for the verify script.
+            # All parameters — including the impl file — go into the hashtable
+            # so PowerShell resolves them by name, not positionally.
+            $verifyArgs = @{
+                CryptolSpec = $Spec
+                CryptolFn   = $cryptol
+                Function    = $name
+                OutputDir   = $outDir
+            }
+            if ($ImplLang -eq "rust") { $verifyArgs.RustFile = $Impl }
+            else                      { $verifyArgs.CppFile  = $Impl }
             if ($ImplLang -eq "cpp") {
-                if ($CxxIncludeDirs.Count -gt 0)  { $verifyExtraArgs.IncludeDirs = $CxxIncludeDirs }
-                if ($CxxStandard -ne "")           { $verifyExtraArgs.CxxStandard = $CxxStandard }
-                if ($ExtraClangFlags.Count -gt 0)  { $verifyExtraArgs.ClangFlags  = $ExtraClangFlags }
+                if ($CxxIncludeDirs.Count -gt 0)  { $verifyArgs.IncludeDirs = $CxxIncludeDirs }
+                if ($CxxStandard -ne "")           { $verifyArgs.CxxStandard = $CxxStandard }
+                if ($ExtraClangFlags.Count -gt 0)  { $verifyArgs.ClangFlags  = $ExtraClangFlags }
             }
 
-            & $verifyScript `
-                $implParam $Impl `
-                -CryptolSpec $Spec `
-                -CryptolFn $cryptol `
-                -Function $name `
-                -OutputDir $outDir `
-                @verifyExtraArgs
+            & $verifyScript @verifyArgs
             if ($LASTEXITCODE -eq 0) {
                 Write-Host " ok" -ForegroundColor Green
                 $passed++

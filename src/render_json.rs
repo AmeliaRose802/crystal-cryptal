@@ -46,6 +46,7 @@ mod tests {
                 body: "\\x -> x".into(),
                 doc: vec![],
                 proof_status: None,
+                is_private: false,
             },
         ];
 

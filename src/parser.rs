@@ -328,6 +328,7 @@ fn parse_property_decl(text: &str, items: &mut Vec<Item>) {
                     body: rest.to_string(),
                     doc: Vec::new(),
                     proof_status: None,
+                    is_private: false,
                 });
             }
             return;
@@ -348,6 +349,7 @@ fn parse_property_decl(text: &str, items: &mut Vec<Item>) {
         body: dedent(rhs),
         doc: Vec::new(),
         proof_status: None,
+        is_private: false,
     });
 }
 
@@ -409,6 +411,7 @@ fn parse_prim_or_foreign(text: &str, items: &mut Vec<Item>) {
             body: String::new(),
             doc: Vec::new(),
             proof_status: None,
+            is_private: false,
         });
     }
 }
@@ -439,6 +442,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
         // Strip the "private" keyword line, preserving indentation of the rest
         let rest = text.strip_prefix("private").unwrap_or(text);
         // Re-parse each top-level declaration within the private block
+        let private_start = items.len();
         for chunk in split_private_block(rest) {
             let chunk = chunk.trim();
             if chunk.is_empty() {
@@ -484,6 +488,14 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                 }
             }
         }
+        // Mark all Function/Property items added within this private block.
+        for i in private_start..items.len() {
+            match &mut items[i] {
+                Item::Function { is_private, .. } => *is_private = true,
+                Item::Property { is_private, .. } => *is_private = true,
+                _ => {}
+            }
+        }
         return;
     } else {
         text
@@ -509,6 +521,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                         body: String::new(),
                         doc: Vec::new(),
                         proof_status: None,
+                        is_private: false,
                     });
                 }
             }
@@ -529,6 +542,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                         body: String::new(),
                         doc: Vec::new(),
                         proof_status: None,
+                        is_private: false,
                     });
                 }
             }
@@ -571,6 +585,7 @@ fn parse_binding(text: &str, items: &mut Vec<Item>) {
         body: text.to_string(),
         doc: Vec::new(),
         proof_status: None,
+        is_private: false,
     });
 }
 

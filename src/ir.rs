@@ -70,6 +70,9 @@ pub enum Item {
         body: String,
         doc: Vec<String>,
         proof_status: Option<ProofStatus>,
+        /// True when the declaration appeared inside a Cryptol `private` block.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_private: bool,
     },
     Property {
         label: String,
@@ -78,6 +81,9 @@ pub enum Item {
         body: String,
         doc: Vec<String>,
         proof_status: Option<ProofStatus>,
+        /// True when the declaration appeared inside a Cryptol `private` block.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_private: bool,
     },
     CommentBlock {
         lines: Vec<String>,
@@ -253,6 +259,7 @@ mod tests {
                 body: "x + y".into(),
                 doc: vec![],
                 proof_status: None,
+                is_private: false,
             },
             Item::Property {
                 label: "P1".into(),
@@ -264,6 +271,7 @@ mod tests {
                     solver: "z3".into(),
                     time_secs: Some(0.42),
                 }),
+                is_private: false,
             },
             Item::CommentBlock {
                 lines: vec!["// end of spec".into()],
@@ -369,5 +377,79 @@ mod tests {
             functions.get("provisionKey").unwrap(),
             ProofStatus::Proven { solver, .. } if solver == "z3"
         ));
+    }
+
+    #[test]
+    fn private_block_items_marked() {
+        use crate::parser::parse;
+
+        let src = r#"
+module Test where
+
+pub : [8] -> [8]
+pub x = x
+
+private
+
+  helper : [8] -> [8]
+  helper x = x + 1
+
+  helperB : [8] -> [8]
+  helperB x = x + 2
+"#;
+        let items = parse(src);
+
+        let pub_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "pub"));
+        if let Some(Item::Function { is_private, .. }) = pub_item {
+            assert!(!is_private, "pub should not be marked private");
+        } else {
+            panic!("pub function not found");
+        }
+
+        let helper_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "helper"));
+        if let Some(Item::Function { is_private, .. }) = helper_item {
+            assert!(is_private, "helper should be marked private");
+        } else {
+            panic!("helper function not found");
+        }
+
+        let helperb_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "helperB"));
+        if let Some(Item::Function { is_private, .. }) = helperb_item {
+            assert!(is_private, "helperB should be marked private");
+        } else {
+            panic!("helperB function not found");
+        }
+    }
+
+    #[test]
+    fn private_not_serialized_when_false() {
+        // is_private: false should not appear in the JSON output.
+        let item = Item::Function {
+            name: "foo".into(),
+            signature: "() -> ()".into(),
+            branches: vec![],
+            body: String::new(),
+            doc: vec![],
+            proof_status: None,
+            is_private: false,
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(!json.contains("is_private"), "is_private=false should be omitted from JSON");
+    }
+
+    #[test]
+    fn private_serialized_when_true() {
+        // is_private: true SHOULD appear in the JSON output.
+        let item = Item::Function {
+            name: "helper".into(),
+            signature: "() -> ()".into(),
+            branches: vec![],
+            body: String::new(),
+            doc: vec![],
+            proof_status: None,
+            is_private: true,
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("is_private"), "is_private=true should be present in JSON");
     }
 }

@@ -33,6 +33,11 @@ struct Cli {
     #[arg(long)]
     emit_function_list: bool,
 
+    /// When used with --emit-function-list, also include `private` declarations
+    /// (by default only exported/public functions are listed)
+    #[arg(long)]
+    include_private: bool,
+
     /// Omit detailed function bodies and property explanations
     #[arg(long)]
     no_details: bool,
@@ -190,6 +195,7 @@ fn main() {
                                     "*(Property `{key}` appears in proof manifest but was not found in the spec.)*"
                                 )],
                                 proof_status: Some(status.clone()),
+                                is_private: false,
                             });
                         }
                     }
@@ -215,7 +221,7 @@ fn main() {
     let unified_symbols = SymbolTable::build_for_modules(&module_specs);
 
     if cli.emit_function_list {
-        run_emit_function_list(&modules, &cli.output);
+        run_emit_function_list(&modules, &cli.output, cli.include_private);
         return;
     }
 
@@ -574,7 +580,7 @@ struct FunctionEntry {
 
 /// Emit a JSON array of all functions across all modules, suitable for use as
 /// saw-spec-gen batch input.
-fn run_emit_function_list(modules: &[ModuleBundle], output: &Path) {
+fn run_emit_function_list(modules: &[ModuleBundle], output: &Path, include_private: bool) {
     let mut entries: Vec<FunctionEntry> = Vec::new();
 
     for module in modules {
@@ -585,6 +591,7 @@ fn run_emit_function_list(modules: &[ModuleBundle], output: &Path) {
                 branches,
                 body,
                 doc,
+                is_private,
                 ..
             } = item
             {
@@ -592,6 +599,10 @@ fn run_emit_function_list(modules: &[ModuleBundle], output: &Path) {
                     continue;
                 }
                 if is_simple_constructor_by_name(name) {
+                    continue;
+                }
+                // Skip private helpers unless caller asked for them.
+                if *is_private && !include_private {
                     continue;
                 }
 

@@ -385,6 +385,48 @@ fn is_simple_constructor(name: &str, branches: &[Branch], body: &str) -> bool {
     rhs.starts_with('(') && rhs.contains(',') && rhs.len() < 40
 }
 
+/// Replace characters that are illegal in Windows filenames and collapse runs of `-`.
+///
+/// After `to_case(Case::Kebab)` converts a section title to a slug, any character
+/// that survived the conversion but is rejected by Windows (e.g. `*` from `void*`)
+/// is replaced with `-`.  Consecutive dashes are collapsed and leading/trailing
+/// dashes are stripped.  Windows reserved base-names (CON, NUL, COM1, …) get a
+/// trailing `_` appended so they remain usable as file-stems.
+pub(crate) fn sanitize_slug(s: &str) -> String {
+    const INVALID: &[char] = &['*', '?', '<', '>', ':', '|', '"', '\\', '/'];
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+
+    let mut slug = String::with_capacity(s.len());
+    let mut last_dash = true; // treat start as dash to trim leading `-`
+    for c in s.chars() {
+        if INVALID.contains(&c) || c == '-' {
+            if !last_dash {
+                slug.push('-');
+                last_dash = true;
+            }
+        } else {
+            slug.push(c);
+            last_dash = false;
+        }
+    }
+    // Trim trailing dash.
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    // Avoid Windows reserved base-names (case-insensitive).
+    if RESERVED.iter().any(|&r| slug.eq_ignore_ascii_case(r)) {
+        slug.push('_');
+    }
+    if slug.is_empty() {
+        slug.push_str("unnamed");
+    }
+    slug
+}
+
 /// Derive a category slug from a section title like "Category A: Key Lifecycle Safety".
 fn category_slug(title: &str) -> String {
     // Strip "Category X: " prefix if present.
@@ -393,7 +435,7 @@ fn category_slug(title: &str) -> String {
     } else {
         title.trim()
     };
-    payload.to_case(Case::Kebab)
+    sanitize_slug(&payload.to_case(Case::Kebab))
 }
 
 /// Generate a property anchor from label and name.
@@ -622,5 +664,34 @@ mod tests {
             resolved.contains("[A::foo](../../A/functions/foo.md)"),
             "resolved = {resolved}"
         );
+    }
+
+    #[test]
+    fn sanitize_slug_strips_windows_invalid_chars() {
+        // `*` in "void* pointer-value" must be removed.
+        assert_eq!(sanitize_slug("void-pointer-value"), "void-pointer-value");
+        assert_eq!(sanitize_slug("void*-pointer-value"), "void-pointer-value");
+
+        // All Windows-invalid chars are replaced and consecutive dashes collapsed.
+        assert_eq!(sanitize_slug("a*b?c<d>e:f|g\"h"), "a-b-c-d-e-f-g-h");
+
+        // Back- and forward-slashes are also invalid.
+        assert_eq!(sanitize_slug("a\\b/c"), "a-b-c");
+
+        // Leading/trailing dashes are stripped.
+        assert_eq!(sanitize_slug("*foo*"), "foo");
+        assert_eq!(sanitize_slug("-foo-"), "foo");
+
+        // Purely-invalid input falls back to "unnamed".
+        assert_eq!(sanitize_slug("***"), "unnamed");
+        assert_eq!(sanitize_slug(""), "unnamed");
+
+        // Windows reserved base-names get a trailing `_`.
+        assert_eq!(sanitize_slug("con"), "con_");
+        assert_eq!(sanitize_slug("NUL"), "NUL_");
+        assert_eq!(sanitize_slug("com1"), "com1_");
+
+        // Normal slugs are unchanged.
+        assert_eq!(sanitize_slug("key-lifecycle-safety"), "key-lifecycle-safety");
     }
 }
