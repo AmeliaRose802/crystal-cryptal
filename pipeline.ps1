@@ -194,11 +194,14 @@ if (-not $SkipVerify -and $Impl -ne "") {
         try {
             # Build optional clang pass-through args (C++ only; verify-rust.ps1
             # does not accept these and Rust compilation is fully self-contained).
-            $verifyExtraArgs = @()
+            # Use a hashtable splat (@{}) so array-valued parameters are bound
+            # correctly — a flat array splat collapses named/value pairs when the
+            # value is itself an array, breaking parameter binding.
+            $verifyExtraArgs = @{}
             if ($ImplLang -eq "cpp") {
-                if ($CxxIncludeDirs.Count -gt 0) { $verifyExtraArgs += "-IncludeDirs"; $verifyExtraArgs += ,$CxxIncludeDirs }
-                if ($CxxStandard -ne "")         { $verifyExtraArgs += "-CxxStandard"; $verifyExtraArgs += $CxxStandard }
-                if ($ExtraClangFlags.Count -gt 0) { $verifyExtraArgs += "-ClangFlags"; $verifyExtraArgs += ,$ExtraClangFlags }
+                if ($CxxIncludeDirs.Count -gt 0)  { $verifyExtraArgs.IncludeDirs = $CxxIncludeDirs }
+                if ($CxxStandard -ne "")           { $verifyExtraArgs.CxxStandard = $CxxStandard }
+                if ($ExtraClangFlags.Count -gt 0)  { $verifyExtraArgs.ClangFlags  = $ExtraClangFlags }
             }
 
             & $verifyScript `
