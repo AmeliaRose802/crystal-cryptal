@@ -1,0 +1,146 @@
+name: Release
+
+# Triggers on every push to master (i.e. every merged PR). The `check-version`
+# job reads the version from Cargo.toml and skips the rest of the workflow
+# when a GitHub release for that tag already exists, so only commits that
+# actually bump `package.version` produce a release.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+      should_release: ${{ steps.exists.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from Cargo.toml
+        id: read
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+          if [ -z "$version" ]; then
+            echo "::error::Could not read package.version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $version (tag v$version)"
+
+      - name: Check whether tag already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.read.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG does not exist; will build and publish."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Stage artifact (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          version="${{ needs.check-version.outputs.version }}"
+          name="pretty-specs-v${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/pretty-specs" "dist/$name/"
+          [ -f README.md ] && cp README.md "dist/$name/" || true
+          for f in LICENSE LICENSE.md LICENSE-MIT LICENSE-APACHE; do
+            [ -f "$f" ] && cp "$f" "dist/$name/" || true
+          done
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Stage artifact (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.check-version.outputs.version }}"
+          $name = "pretty-specs-v$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/pretty-specs.exe" "dist/$name/"
+          if (Test-Path README.md) { Copy-Item README.md "dist/$name/" }
+          Get-ChildItem -Filter 'LICENSE*' -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "dist/$name/" }
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          "ASSET=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pretty-specs-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-version.outputs.tag }}
+          name: ${{ needs.check-version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*
