@@ -38,8 +38,7 @@ fn test_block_comment_stripping() {
 
 #[test]
 fn test_nested_block_comments() {
-    let (cleaned, _) =
-        super::preprocess::strip_block_comments("a /* outer /* inner */ still */ b");
+    let (cleaned, _) = super::preprocess::strip_block_comments("a /* outer /* inner */ still */ b");
     assert!(cleaned.contains('a'));
     assert!(cleaned.contains('b'));
     assert!(!cleaned.contains("outer"));

@@ -82,9 +82,7 @@ pub(crate) fn extract_module_dependencies(items: &[Item]) -> Vec<String> {
     deps
 }
 
-pub(crate) fn topological_module_order(
-    modules: &[ModuleBundle],
-) -> Result<Vec<usize>, String> {
+pub(crate) fn topological_module_order(modules: &[ModuleBundle]) -> Result<Vec<usize>, String> {
     let mut name_to_idx = BTreeMap::new();
     for (idx, module) in modules.iter().enumerate() {
         name_to_idx.insert(module.module_name.clone(), idx);

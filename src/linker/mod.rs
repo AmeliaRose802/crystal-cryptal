@@ -11,8 +11,8 @@ mod tests;
 mod util;
 
 pub use call_graph::function_call_graph;
-pub(crate) use util::{contains_word, sanitize_slug};
 use util::{category_slug, is_simple_constructor, property_anchor};
+pub(crate) use util::{contains_word, sanitize_slug};
 
 pub struct ModuleSpec<'a> {
     pub name: &'a str,

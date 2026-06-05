@@ -7,8 +7,7 @@ use crate::ir::Item;
 use crate::linker::SymbolTable;
 
 use super::util::{
-    describe_type, is_simple_constructor, prefixed_file, render_type_alias_width,
-    sanitize_type_doc,
+    describe_type, is_simple_constructor, prefixed_file, render_type_alias_width, sanitize_type_doc,
 };
 
 pub(super) fn render_types(items: &[Item], symbols: &SymbolTable, path_prefix: &str) -> String {

@@ -6,11 +6,11 @@ use std::fmt::Write as FmtWrite;
 use crate::ir::{Item, ProofStatus};
 use crate::linker::SymbolTable;
 
+use super::RenderOptions;
 use super::categories::{collect_categories, property_range, render_category_status};
 use super::equivalence::function_status_map;
 use super::fns_index::{collect_functions_for_index, render_functions_table};
 use super::util::is_simple_constructor;
-use super::RenderOptions;
 
 pub(super) fn render_index(
     items: &[Item],

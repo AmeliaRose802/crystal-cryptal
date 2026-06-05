@@ -6,6 +6,7 @@ use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::Item;
 use crate::linker::SymbolTable;
 
+use super::RenderOptions;
 use super::equivalence::{
     find_involved_function_names, function_status_map, render_implementation_equivalence_callout,
 };
@@ -20,9 +21,12 @@ use super::util::{
     anchor_for, camel_to_spaced, describe_type, is_simple_constructor, render_doc_body,
     render_type_alias_width, sanitize_type_doc, strip_category_prefix,
 };
-use super::RenderOptions;
 
-pub fn render_single_file(items: &[Item], symbols: &SymbolTable, options: &RenderOptions) -> String {
+pub fn render_single_file(
+    items: &[Item],
+    symbols: &SymbolTable,
+    options: &RenderOptions,
+) -> String {
     let mut out = String::new();
 
     let (module_name, module_doc) = items

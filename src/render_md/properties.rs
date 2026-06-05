@@ -9,18 +9,18 @@ use crate::describe::auto_describe_property;
 use crate::ir::Item;
 use crate::linker::SymbolTable;
 
+use super::RenderOptions;
 use super::equivalence::{
     find_involved_function_names, function_status_map, render_implementation_equivalence_callout,
 };
 use super::proof::{
     find_involved_symbols, intentional_counterexample_callout, is_intentional_counterexample,
-    proof_badge, proof_detail_line, render_failure_details_callout,
-    render_proof_details_callout, render_verify_command_section,
+    proof_badge, proof_detail_line, render_failure_details_callout, render_proof_details_callout,
+    render_verify_command_section,
 };
 use super::util::{
     camel_to_spaced, category_slug_from_title, prefixed_file, strip_category_prefix,
 };
-use super::RenderOptions;
 
 pub(super) fn render_property_files(
     items: &[Item],

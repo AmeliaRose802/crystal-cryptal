@@ -9,16 +9,16 @@ use crate::describe::auto_describe_function;
 use crate::ir::Item;
 use crate::linker::SymbolTable;
 
+use super::RenderOptions;
 use super::mermaid::render_flowchart_mermaid;
 use super::proof::{
-    proof_badge, proof_detail_line, render_failure_details_callout,
-    render_proof_details_callout, render_verify_command_section,
+    proof_badge, proof_detail_line, render_failure_details_callout, render_proof_details_callout,
+    render_verify_command_section,
 };
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
 use super::util::{
     anchor_for, camel_to_spaced, is_simple_constructor, prefixed_file, render_doc_body,
 };
-use super::RenderOptions;
 
 pub(super) fn render_function_files(
     items: &[Item],

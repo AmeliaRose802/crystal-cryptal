@@ -15,9 +15,9 @@ mod branches;
 mod decls;
 mod post;
 mod sections;
-mod text;
 #[cfg(test)]
 mod tests;
+mod text;
 
 use decls::classify_decl;
 use post::{attach_docs, group_enums, merge_signatures};

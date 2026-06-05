@@ -6,9 +6,9 @@ use crate::describe::auto_describe_function;
 use crate::ir::{Item, ProofStatus};
 use crate::linker::SymbolTable;
 
+use super::RenderOptions;
 use super::proof::{is_useful_summary, proof_status_cell};
 use super::util::{escape_md_cell, first_doc_line, is_constant_binding, is_simple_constructor};
-use super::RenderOptions;
 
 pub(super) fn render_functions_index(
     items: &[Item],

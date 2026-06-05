@@ -3,8 +3,7 @@ use crate::ir::Item;
 
 #[test]
 fn parses_import_with_alias_and_hiding() {
-    let items =
-        parse("module A where\n\nimport Crypto::Hash as H hiding (internalA, internalB)\n");
+    let items = parse("module A where\n\nimport Crypto::Hash as H hiding (internalA, internalB)\n");
 
     let import = items.into_iter().find_map(|i| match i {
         Item::Import {

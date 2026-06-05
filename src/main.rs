@@ -13,8 +13,8 @@ use pretty_specs::render_md::{RenderOptions, render_multi_file_with_prefix, rend
 
 use cli::assets::handle_branding_assets;
 use cli::bundle::{
-    JsonModule, ModuleBundle, collect_input_files, detect_module_name,
-    extract_module_dependencies, render_multi_module_index, topological_module_order,
+    JsonModule, ModuleBundle, collect_input_files, detect_module_name, extract_module_dependencies,
+    render_multi_module_index, topological_module_order,
 };
 use cli::extra_docs::handle_extra_docs;
 use cli::functions::run_emit_function_list;
