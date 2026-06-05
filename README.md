@@ -1,6 +1,13 @@
 # pretty-specs
 
-Renders Cryptol `.cry` specification files into clean, cross-linked Markdown documentation.
+Renders Cryptol `.cry` specification files into clean, cross-linked Markdown
+documentation. Optionally consumes proof results from
+[SAW](https://saw.galois.com/) / Cryptol so verified properties and
+implementation-vs-spec equivalence proofs are surfaced inline.
+
+See [docs/usage.md](docs/usage.md) for the full CLI reference and the
+[saw-spec-gen](https://github.com/AmeliaRose802/saw-spec-gen) pipeline
+walkthrough.
 
 ## Installation
 
@@ -13,35 +20,62 @@ cargo build --release
 # Binary at target/release/pretty-specs
 ```
 
-## Usage
+## Quick start
 
 ```bash
-# Multi-file output (one page per function, property, etc.)
-pretty-specs SDEP.cry -o output/
+# Multi-file output (one page per function / property)
+pretty-specs SDEP.cry -o docs/
+
+# Multiple files or a directory of .cry modules (multi-module mode)
+pretty-specs examples/ -o docs/
+pretty-specs ModA.cry ModB.cry -o docs/
 
 # Single Markdown file to stdout
 pretty-specs SDEP.cry --single-file
 
-# JSON IR to stdout
+# JSON IR to stdout (or to a file with -o)
 pretty-specs SDEP.cry --emit-json
 
-# Attach proof results from a SAW/Cryptol manifest
+# Attach proof results from a manifest
 pretty-specs SDEP.cry --proof-status manifest.json -o docs/
 
 # Custom title, omit function bodies
 pretty-specs SDEP.cry --title "My Protocol" --no-details -o docs/
 ```
 
-## CLI Reference
+### saw-spec-gen interop
+
+```bash
+# Emit a function inventory for saw-spec-gen
+pretty-specs SDEP.cry --emit-function-list -o function_list.json
+
+# Convert a raw SAW prove_print log into a proof manifest
+pretty-specs --adapt-saw-log saw_output.txt --manifest-output proof_manifest.json
+
+# Collect per-function saw-spec-gen result.json files into one manifest
+pretty-specs --adapt-saw-results ./verify_out --manifest-output proof_manifest.json
+```
+
+The bundled [pipeline.ps1](pipeline.ps1) chains all of these steps end-to-end
+(initial render → emit function list → run saw-spec-gen per function →
+adapt results → re-render with badges). Run `Get-Help .\pipeline.ps1 -Full`
+for parameters.
+
+## CLI reference
 
 | Flag | Description |
 |---|---|
-| `<INPUT>` | Path to the `.cry` input file (required) |
-| `-o, --output <DIR>` | Output directory (default: `./output`) |
-| `--single-file` | Emit a single Markdown file instead of a directory |
-| `--emit-json` | Emit JSON IR instead of Markdown |
+| `<INPUT...>` | One or more `.cry` files, or directories containing `.cry` files |
+| `-o, --output <PATH>` | Output directory for docs; output file for `--emit-json`, `--emit-function-list`, `--adapt-*` |
+| `--single-file` | Single Markdown file to stdout (single-module input only) |
+| `--emit-json` | JSON IR instead of Markdown |
+| `--emit-function-list` | JSON array of functions (name, signature, arity, doc summary) for saw-spec-gen |
+| `--include-private` | With `--emit-function-list`, also include `private` declarations |
 | `--no-details` | Omit function bodies and property explanations |
-| `--proof-status <FILE>` | Path to a proof-status JSON manifest |
+| `--proof-status <FILE>` | Proof-status JSON manifest (properties and/or functions) |
+| `--adapt-saw-log <FILE>` | Parse a raw SAW `prove_print` / `prove` log → proof manifest |
+| `--adapt-saw-results <DIR>` | Scan a directory for saw-spec-gen `result.json` files → proof manifest |
+| `--manifest-output <FILE>` | Output path for `--adapt-saw-log` / `--adapt-saw-results` (default: `proof_manifest.json`) |
 | `--title <TITLE>` | Document title (overrides the module name) |
 | `--docfx` | Emit DocFX-compatible front-matter and `toc.yml` files |
 | `--logo <PATH>` | Copy a logo image into `<output>/images/` (prints `_appLogoPath` snippet under `--docfx`) |
@@ -54,45 +88,66 @@ pretty-specs SDEP.cry --title "My Protocol" --no-details -o docs/
 |---|---|
 | 0 | Success |
 | 1 | Parse error |
-| 2 | I/O error (cannot read input, cannot write output) |
+| 2 | I/O error (cannot read input, cannot write output, missing args) |
 
-## Output Structure
+## Output structure
 
-Multi-file mode (`-o docs/`) generates:
+Multi-file mode (`-o docs/`) generates, per module:
 
 ```
 docs/
 ├── index.md              # Overview with table of contents
 ├── types.md              # Type aliases, enums, records
 ├── functions/
+│   ├── index.md
 │   ├── provisionKey.md   # One file per function
 │   ├── authenticate.md
 │   └── ...
 └── properties/
+    ├── index.md
     ├── key-lifecycle-safety.md   # One file per property group
-    ├── authentication-security.md
     └── ...
 ```
 
+Multi-module mode nests each module under its own subdirectory and adds a
+top-level `index.md` with a Mermaid dependency graph; cross-module links are
+resolved automatically.
+
 Single-file mode (`--single-file`) writes one combined document to stdout.
+JSON mode (`--emit-json`) writes the intermediate representation to stdout
+or to the `-o` path if specified.
 
-JSON mode (`--emit-json`) writes the intermediate representation as JSON to stdout (or to the `-o` path if specified).
+## Proof status integration
 
-## Proof Status Integration
-
-Use `--proof-status <FILE>` to annotate properties with verification results. The manifest is a JSON object mapping property labels to status entries:
+`--proof-status <FILE>` annotates properties and functions with verification
+results. The manifest accepts both a structured form and a legacy flat form
+(property-only):
 
 ```json
 {
-  "P1": { "status": "proven", "solver": "z3", "time_secs": 0.42 },
-  "P2": { "status": "proven", "solver": "z3", "time_secs": 0.15 },
-  "P8": { "status": "assumed" },
-  "P25": { "status": "not_attempted" },
-  "P99": { "status": "failed", "reason": "counterexample found" }
+  "properties": {
+    "P1": { "status": "proven", "solver": "z3", "time_secs": 0.42 },
+    "P8": { "status": "assumed" },
+    "P25": { "status": "not_attempted" },
+    "P99": { "status": "failed", "reason": "counterexample found" }
+  },
+  "functions": {
+    "provisionKey": {
+      "overall": { "status": "proven", "solver": "z3", "time_secs": 1.2 },
+      "by_language": {
+        "cpp":  { "status": "proven", "solver": "z3", "impl_file": "sdep.cpp" },
+        "rust": { "status": "not_attempted" }
+      }
+    }
+  }
 }
 ```
 
-Supported statuses: `proven`, `assumed`, `failed`, `not_attempted`. Properties not listed in the manifest are rendered without a status badge.
+Supported statuses: `proven`, `assumed`, `failed`, `not_attempted`.
+
+Manifest entries with status `failed` or `not_attempted` that don't match any
+property in the spec are still rendered as placeholder sections, so gaps are
+never silently dropped.
 
 ## Extra Docs
 
@@ -122,9 +177,51 @@ The display name comes from the optional `:NAME` suffix; otherwise the
 basename is title-cased (`extra_guides` → `Extra Guides`). Hidden entries
 (names starting with `.`) and symlinks are skipped.
 
-## Development Setup
+## Architecture
 
-Enable the pre-commit hook (one-time):
+```
+.cry files ─▶ Lexer ─▶ Parser ─▶ IR ─▶ Linker ─▶ Renderer ─▶ output/
+              (logos)  (lalrpop  (Vec<  (symbol   (Markdown
+                       grammar)  Item>) table)    or JSON)
+```
+
+1. **Lexer** ([`src/lexer/`](src/lexer/mod.rs)) — tokenizes `.cry` source using
+   [logos](https://crates.io/crates/logos), with a layout pass that injects
+   virtual `{`/`;`/`}` tokens for layout-sensitive blocks.
+2. **Parser** ([`src/parser/`](src/parser/mod.rs)) — a lalrpop grammar
+   classifies declarations by leading keyword and returns byte-offset spans;
+   Rust code then extracts names, signatures, and bodies into typed items.
+3. **IR** ([`src/ir/`](src/ir/mod.rs)) — flat `Vec<Item>` (modules, type
+   aliases, enums, records, functions, properties, sections, doc blocks).
+4. **Linker** ([`src/linker/`](src/linker/mod.rs)) — builds a `SymbolTable`
+   so functions, types, and properties cross-link to one another (single or
+   multi-module).
+5. **Renderer** ([`src/render_md/`](src/render_md/mod.rs),
+   [`src/render_json.rs`](src/render_json.rs)) — emits Markdown (multi-file
+   or single-file) or JSON. Cross-links symbols, renders decision tables for
+   `if/then/else` functions, and attaches proof-status badges.
+
+## Development
+
+```bash
+# Build, test, lint
+cargo build --all-targets
+cargo test --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all
+
+# Update snapshots after intentional output changes
+cargo insta review
+
+# Run a single snapshot test
+cargo test snapshot_single_file
+```
+
+Snapshot tests live in [tests/snapshots.rs](tests/snapshots.rs) and use
+[insta](https://crates.io/crates/insta) for approval-based testing. The
+canonical fixture spec is [tests/fixtures/SDEP.cry](tests/fixtures/SDEP.cry).
+
+### Pre-commit hook
 
 ```bash
 git config core.hooksPath .githooks
@@ -137,43 +234,14 @@ This gates every commit on:
 - `cargo test` (all tests pass)
 - Max 500 non-empty lines per `.rs` file
 
-To run the checks manually on Windows without Git Bash:
+On Windows without Git Bash:
 
 ```powershell
 powershell -File .githooks/pre-commit.ps1
 ```
 
-## Architecture
-
-```
-.cry file ──> Lexer ──> Parser ──> IR ──> Linker ──> Renderer ──> output/
-              (logos)   (line-     (typed  (symbol    (Markdown
-               tokens)   level)    AST)    table)     or JSON)
-```
-
-1. **Lexer** — tokenizes `.cry` source using [logos](https://crates.io/crates/logos).
-2. **Parser** — line-level structural parser that recognizes modules, types, enums, records, functions, properties, sections, and doc comments. Not a full Cryptol parser.
-3. **IR** — flat list of typed `Item` nodes (see `src/ir.rs`).
-4. **Linker** — builds a `SymbolTable` for cross-references between types, functions, and properties.
-5. **Renderer** — emits Markdown (multi-file or single-file) or JSON. Cross-links symbols, renders decision tables for `if/then/else` functions, and formats proof status badges.
-
-## Development
-
-```bash
-# Run tests
-cargo test
-
-# Run clippy
-cargo clippy
-
-# Update snapshots after intentional output changes
-cargo insta review
-
-# Run a single snapshot test
-cargo test snapshot_single_file
-```
-
-Snapshot tests live in `tests/snapshots.rs` and use [insta](https://crates.io/crates/insta) for approval-based testing. The fixture spec is at `tests/fixtures/SDEP.cry`.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same
+checks on both Linux and Windows.
 
 ## License
 
