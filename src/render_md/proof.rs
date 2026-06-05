@@ -136,13 +136,12 @@ pub(super) fn render_verify_command_section(status: &Option<ProofStatus>) -> Opt
         let _ = writeln!(out, "Re-run the proof locally:\n");
         let _ = writeln!(out, "```sh\n{}\n```\n", cmd.trim());
     }
-    if let Some(script) = verify_script {
-        if verify_command
+    if let Some(script) = verify_script
+        && verify_command
             .map(|cmd| !cmd.contains(script))
             .unwrap_or(true)
-        {
-            let _ = writeln!(out, "Script: `{script}`\n");
-        }
+    {
+        let _ = writeln!(out, "Script: `{script}`\n");
     }
     Some(out)
 }
@@ -319,7 +318,10 @@ mod tests {
         );
         assert!(out.contains("2 overrides"), "override count missing: {out}");
         assert!(out.contains("`memcpy`"), "override name missing: {out}");
-        assert!(out.contains("`operator new`"), "override name missing: {out}");
+        assert!(
+            out.contains("`operator new`"),
+            "override name missing: {out}"
+        );
         assert!(out.contains("12.30s"), "wall-clock missing: {out}");
     }
 

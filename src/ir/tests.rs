@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::manifest::{ExtendedManifest, ManifestEntry};
+use super::manifest::ExtendedManifest;
 use super::*;
 
 #[test]
