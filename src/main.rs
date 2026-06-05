@@ -213,6 +213,10 @@ struct ExtraDocsEntry {
     /// `None` when the source dir has no obvious entry point — files are
     /// still copied so docfx picks them up via its content glob.
     href: Option<String>,
+    /// Optional Markdown-friendly href (`<basename>/index.md`) used when
+    /// linking from the generated homepage. `None` when the source dir has
+    /// no `index.md` at its root.
+    md_href: Option<String>,
 }
 
 /// Title-case a directory basename for use as a toc label. Splits on `-`,
@@ -279,10 +283,15 @@ fn copy_extra_docs(output: &Path, extra_docs: &[String]) -> Vec<ExtraDocsEntry> 
             }
         }
 
+        let md_href = if dest.join("index.md").is_file() {
+            Some(format!("{basename}/index.md"))
+        } else {
+            None
+        };
         let href = if dest.join("toc.yml").is_file() {
             Some(format!("{basename}/toc.yml"))
-        } else if dest.join("index.md").is_file() {
-            Some(format!("{basename}/index.md"))
+        } else if let Some(md) = &md_href {
+            Some(md.clone())
         } else {
             eprintln!(
                 "note: --extra-docs {}: no toc.yml or index.md at root; skipping toc entry",
@@ -292,7 +301,11 @@ fn copy_extra_docs(output: &Path, extra_docs: &[String]) -> Vec<ExtraDocsEntry> 
         };
 
         let display_name = name_override.unwrap_or_else(|| humanize_basename(&basename));
-        entries.push(ExtraDocsEntry { display_name, href });
+        entries.push(ExtraDocsEntry {
+            display_name,
+            href,
+            md_href,
+        });
     }
     entries
 }
@@ -336,13 +349,63 @@ fn append_extra_docs_to_toc(output: &Path, entries: &[ExtraDocsEntry]) {
     }
 }
 
-/// Copy `--extra-docs` directories and (in `--docfx` mode) patch the
-/// top-level `toc.yml` so the pages appear in the navbar.
+/// Append an "Additional Documentation" section to `<output>/index.md`
+/// linking each extra-docs entry that has a markdown landing page
+/// (`<basename>/index.md`). No-op when there are no entries, no homepage
+/// to patch, or none of the entries expose an `index.md`.
+fn append_extra_docs_to_index(output: &Path, entries: &[ExtraDocsEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    let linkable: Vec<&ExtraDocsEntry> = entries
+        .iter()
+        .filter(|e| e.md_href.is_some())
+        .collect();
+    if linkable.is_empty() {
+        return;
+    }
+    let index_path = output.join("index.md");
+    if !index_path.is_file() {
+        return;
+    }
+    let mut existing = match std::fs::read_to_string(&index_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "warning: cannot read {} to add extra-docs links: {e}",
+                index_path.display()
+            );
+            return;
+        }
+    };
+    if !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str("\n## Additional Documentation\n\n");
+    existing.push_str(
+        "This site ships with additional hand-written documentation:\n\n",
+    );
+    for entry in linkable {
+        let href = entry.md_href.as_deref().unwrap();
+        existing.push_str(&format!("- [{}]({})\n", entry.display_name, href));
+    }
+    if let Err(e) = std::fs::write(&index_path, &existing) {
+        eprintln!(
+            "warning: cannot write {} with extra-docs links: {e}",
+            index_path.display()
+        );
+    }
+}
+
+/// Copy `--extra-docs` directories, link them from the homepage, and
+/// (in `--docfx` mode) patch the top-level `toc.yml` so the pages appear
+/// in the navbar.
 fn handle_extra_docs(output: &Path, extra_docs: &[String], docfx: bool) {
     if extra_docs.is_empty() {
         return;
     }
     let entries = copy_extra_docs(output, extra_docs);
+    append_extra_docs_to_index(output, &entries);
     if docfx {
         append_extra_docs_to_toc(output, &entries);
     }
