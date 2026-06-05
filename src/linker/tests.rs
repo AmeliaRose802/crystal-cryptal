@@ -7,7 +7,8 @@ use crate::parser::parse;
 
 fn load_items() -> Vec<Item> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
+        .join("tests")
+        .join("fixtures")
         .join("SDEP.cry");
     let src = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("SDEP.cry not found at {}: {e}", path.display()));
