@@ -11,11 +11,7 @@ use crate::ir::Branch;
 
 /// Auto-generate a plain-English description for a property that has no doc comment.
 /// Returns `None` when no useful description can be inferred.
-pub fn auto_describe_property(
-    name: &str,
-    params: &[String],
-    body: &str,
-) -> Option<String> {
+pub fn auto_describe_property(name: &str, params: &[String], body: &str) -> Option<String> {
     let readable = name.to_case(Case::Lower);
     let rhs = prop_rhs_flat(body);
 
@@ -23,7 +19,9 @@ pub fn auto_describe_property(
     if rhs.contains("==>") {
         // Implication chain: "given preconditions, asserts that ..."
         let conclusions = rhs.rsplit("==>").next().unwrap_or("").trim();
-        if conclusions.contains("== True") || (!conclusions.contains("==") && !conclusions.contains("!=")) {
+        if conclusions.contains("== True")
+            || (!conclusions.contains("==") && !conclusions.contains("!="))
+        {
             return Some(format!(
                 "{}: given the stated preconditions, asserts the result holds.",
                 capitalize(&readable),
@@ -111,10 +109,7 @@ fn capitalize(s: &str) -> String {
 /// first line) into a single whitespace-normalized string.
 fn prop_rhs_flat(body: &str) -> String {
     // Property body may be multi-line; join all lines.
-    body.lines()
-        .map(|l| l.trim())
-        .collect::<Vec<_>>()
-        .join(" ")
+    body.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ")
 }
 
 /// Auto-generate a description for a function that has no doc comment.
@@ -141,10 +136,7 @@ pub fn auto_describe_function(
     } else if is_record_body(body) && ret != "Bit" {
         describe_record_ctor(&ret)
     } else if ret == "Bit" && params.len() == 1 {
-        vec![format!(
-            "Tests whether `{}` is well-formed.",
-            params[0]
-        )]
+        vec![format!("Tests whether `{}` is well-formed.", params[0])]
     } else if !params.is_empty() {
         describe_generic(&params, &ret)
     } else {
@@ -173,11 +165,7 @@ fn extract_params(body: &str, fn_name: &str) -> Vec<String> {
 }
 
 fn return_type(sig: &str) -> String {
-    sig.rsplit("->")
-        .next()
-        .unwrap_or(sig)
-        .trim()
-        .to_string()
+    sig.rsplit("->").next().unwrap_or(sig).trim().to_string()
 }
 
 /// Flatten the RHS of a binding (everything after the first `=`) into a
@@ -194,19 +182,13 @@ fn rhs_flat(body: &str) -> String {
 fn is_and_chain(body: &str, params: &[String]) -> bool {
     let expr = rhs_flat(body);
     let parts: Vec<&str> = expr.split("&&").map(|s| s.trim()).collect();
-    parts.len() == params.len()
-        && parts
-            .iter()
-            .all(|p| params.iter().any(|param| param == p))
+    parts.len() == params.len() && parts.iter().all(|p| params.iter().any(|param| param == p))
 }
 
 fn is_or_chain(body: &str, params: &[String]) -> bool {
     let expr = rhs_flat(body);
     let parts: Vec<&str> = expr.split("||").map(|s| s.trim()).collect();
-    parts.len() == params.len()
-        && parts
-            .iter()
-            .all(|p| params.iter().any(|param| param == p))
+    parts.len() == params.len() && parts.iter().all(|p| params.iter().any(|param| param == p))
 }
 
 fn is_equality_check(body: &str) -> bool {
@@ -224,11 +206,7 @@ fn is_record_body(body: &str) -> bool {
 
 // ── Description generators ──────────────────────────────────────────────────
 
-fn describe_decision_table(
-    params: &[String],
-    ret: &str,
-    branches: &[Branch],
-) -> Vec<String> {
+fn describe_decision_table(params: &[String], ret: &str, branches: &[Branch]) -> Vec<String> {
     let n = branches.len();
     let param_refs = backtick_list(params);
     let ret_desc = humanize_ret(ret);
@@ -239,14 +217,14 @@ fn describe_decision_table(
     );
 
     // Add hint about the default branch if present.
-    if let Some(last) = branches.last() {
-        if last.condition.is_none() {
-            // Strip trailing Cryptol comments from the result text.
-            let result = strip_inline_comment(&last.result);
-            desc.push_str(&format!(
-                " Defaults to `{result}` when no prior condition matches.",
-            ));
-        }
+    if let Some(last) = branches.last()
+        && last.condition.is_none()
+    {
+        // Strip trailing Cryptol comments from the result text.
+        let result = strip_inline_comment(&last.result);
+        desc.push_str(&format!(
+            " Defaults to `{result}` when no prior condition matches.",
+        ));
     }
 
     vec![desc]
@@ -254,16 +232,12 @@ fn describe_decision_table(
 
 fn describe_and_chain(params: &[String]) -> Vec<String> {
     let list = backtick_list(params);
-    vec![format!(
-        "Returns `True` only when all of {list} are true."
-    )]
+    vec![format!("Returns `True` only when all of {list} are true.")]
 }
 
 fn describe_or_chain(params: &[String]) -> Vec<String> {
     let list = backtick_list(params);
-    vec![format!(
-        "Returns `True` when any of {list} is true."
-    )]
+    vec![format!("Returns `True` when any of {list} is true.")]
 }
 
 fn describe_predicate(name: &str, params: &[String], body: &str) -> Vec<String> {
@@ -302,27 +276,19 @@ fn describe_equality_check(_name: &str, params: &[String]) -> Vec<String> {
 
 fn describe_record_ctor(ret: &str) -> Vec<String> {
     let ret_desc = humanize_ret(ret);
-    vec![format!(
-        "Constructs {ret_desc} from the given inputs.",
-    )]
+    vec![format!("Constructs {ret_desc} from the given inputs.",)]
 }
 
 fn describe_generic(params: &[String], ret: &str) -> Vec<String> {
     let list = backtick_list(params);
     if ret == "Bit" {
-        vec![format!(
-            "Evaluates a boolean condition over {list}.",
-        )]
+        vec![format!("Evaluates a boolean condition over {list}.",)]
     } else if ret.starts_with('(') {
         // Tuple return
-        vec![format!(
-            "Computes a result tuple from {list}.",
-        )]
+        vec![format!("Computes a result tuple from {list}.",)]
     } else {
         let ret_desc = humanize_ret(ret);
-        vec![format!(
-            "Computes {ret_desc} from {list}.",
-        )]
+        vec![format!("Computes {ret_desc} from {list}.",)]
     }
 }
 
@@ -352,31 +318,29 @@ pub fn humanize_cryptol_type(ty: &str) -> Option<String> {
     }
 
     // [N][8] → "N bytes"
-    if let Some(rest) = ty.strip_prefix('[') {
-        if let Some((inner, after)) = rest.split_once(']') {
-            let inner = inner.trim();
-            let after = after.trim();
-            if after == "[8]" {
-                if inner.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(format!("{inner} bytes"));
-                } else {
-                    return Some(format!("{inner} bytes"));
-                }
+    if let Some(rest) = ty.strip_prefix('[')
+        && let Some((inner, after)) = rest.split_once(']')
+    {
+        let inner = inner.trim();
+        let after = after.trim();
+        if after == "[8]" {
+            // Whether `inner` is a literal digit string or a type variable,
+            // we render the same "<inner> bytes" phrase.
+            return Some(format!("{inner} bytes"));
+        }
+        if after.is_empty() {
+            if inner.chars().all(|c| c.is_ascii_digit()) {
+                return Some(format!("{inner} bits"));
+            } else {
+                return Some(format!("a sequence of {inner} bits"));
             }
-            if after.is_empty() {
-                if inner.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(format!("{inner} bits"));
-                } else {
-                    return Some(format!("a sequence of {inner} bits"));
-                }
-            }
-            // [N][M] for other M
-            if let Some(rest2) = after.strip_prefix('[') {
-                if let Some(m) = rest2.strip_suffix(']') {
-                    let m = m.trim();
-                    return Some(format!("a sequence of {inner} values, each {m} bits wide"));
-                }
-            }
+        }
+        // [N][M] for other M
+        if let Some(rest2) = after.strip_prefix('[')
+            && let Some(m) = rest2.strip_suffix(']')
+        {
+            let m = m.trim();
+            return Some(format!("a sequence of {inner} values, each {m} bits wide"));
         }
     }
 
@@ -437,9 +401,18 @@ mod tests {
     #[test]
     fn decision_table_detected() {
         let branches = vec![
-            Branch { condition: Some("~ fleetEnabled".into()), result: "PR_Disabled".into() },
-            Branch { condition: Some("~ validRequest".into()), result: "PR_BadRequest".into() },
-            Branch { condition: None, result: "PR_Succeeded".into() },
+            Branch {
+                condition: Some("~ fleetEnabled".into()),
+                result: "PR_Disabled".into(),
+            },
+            Branch {
+                condition: Some("~ validRequest".into()),
+                result: "PR_BadRequest".into(),
+            },
+            Branch {
+                condition: None,
+                result: "PR_Succeeded".into(),
+            },
         ];
         let body = "provisionKey fleetEnabled validRequest vaultResult keyIsActive =\n  if ...";
         let sig = "Bit -> Bit -> KeyVaultResult -> Bit -> ProvisionResult";

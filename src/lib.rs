@@ -1,8 +1,8 @@
-pub mod lexer;
-pub mod parser;
-pub mod ir;
-pub mod linker;
 pub mod describe;
-pub mod render_md;
+pub mod ir;
+pub mod lexer;
+pub mod linker;
+pub mod parser;
 pub mod render_json;
+pub mod render_md;
 pub mod saw_log;
