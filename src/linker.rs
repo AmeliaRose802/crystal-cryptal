@@ -35,8 +35,7 @@ impl SymbolTable {
     pub fn build_for_modules(modules: &[ModuleSpec<'_>]) -> Self {
         let mut symbols: HashMap<String, (String, String)> = HashMap::new();
         let mut property_categories: HashMap<String, String> = HashMap::new();
-        let mut related_properties: HashMap<String, Vec<(String, String, String)>> =
-            HashMap::new();
+        let mut related_properties: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
 
         let mut function_names: Vec<String> = Vec::new();
         for module in modules {
@@ -82,8 +81,7 @@ impl SymbolTable {
     pub fn build_for_module_with_prefix(items: &[Item], output_prefix: &str) -> Self {
         let mut symbols: HashMap<String, (String, String)> = HashMap::new();
         let mut property_categories: HashMap<String, String> = HashMap::new();
-        let mut related_properties: HashMap<String, Vec<(String, String, String)>> =
-            HashMap::new();
+        let mut related_properties: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
 
         // Collect all function names first so we can detect back-links in properties.
         let function_names: Vec<String> = items
@@ -143,7 +141,9 @@ impl SymbolTable {
 
         for item in items {
             match item {
-                Item::Section { level: 3, title, .. } => {
+                Item::Section {
+                    level: 3, title, ..
+                } => {
                     current_category_slug = category_slug(title);
                 }
                 Item::TypeAlias { name, .. } => {
@@ -158,7 +158,9 @@ impl SymbolTable {
                     }
                 }
                 Item::EnumGroup {
-                    type_name, variants, ..
+                    type_name,
+                    variants,
+                    ..
                 } => {
                     let anchor = type_name.to_lowercase();
                     let file = format!("{prefix}types.md");
@@ -206,10 +208,7 @@ impl SymbolTable {
                     let file = format!("{prefix}functions/{name}.md");
                     symbols.insert(name.clone(), (file.clone(), String::new()));
                     if !module_name.is_empty() {
-                        symbols.insert(
-                            format!("{module_name}::{name}"),
-                            (file, String::new()),
-                        );
+                        symbols.insert(format!("{module_name}::{name}"), (file, String::new()));
                     }
                 }
                 Item::Property {
@@ -247,9 +246,8 @@ impl SymbolTable {
 
     /// Resolve cross-references as anchor-only links for single-file output.
     pub fn resolve_links_single_file(&self, text: &str) -> String {
-        let mut syms: Vec<(&str, &(String, String))> = self.symbols.iter()
-            .map(|(k, v)| (k.as_str(), v))
-            .collect();
+        let mut syms: Vec<(&str, &(String, String))> =
+            self.symbols.iter().map(|(k, v)| (k.as_str(), v)).collect();
         syms.sort_by(|a, b| {
             let a_qual = a.0.contains("::");
             let b_qual = b.0.contains("::");
@@ -291,9 +289,8 @@ impl SymbolTable {
     /// Resolve cross-references in text, generating relative links from current_file.
     pub fn resolve_links(&self, text: &str, current_file: &str) -> String {
         // Sort symbols by length descending so longer names match first.
-        let mut syms: Vec<(&str, &(String, String))> = self.symbols.iter()
-            .map(|(k, v)| (k.as_str(), v))
-            .collect();
+        let mut syms: Vec<(&str, &(String, String))> =
+            self.symbols.iter().map(|(k, v)| (k.as_str(), v)).collect();
         syms.sort_by(|a, b| {
             let a_qual = a.0.contains("::");
             let b_qual = b.0.contains("::");
@@ -381,10 +378,7 @@ fn is_simple_constructor(name: &str, branches: &[Branch], body: &str) -> bool {
         .map(|l| l.trim())
         .collect::<Vec<_>>()
         .join(" ");
-    let rhs = rhs
-        .find('=')
-        .map(|p| rhs[p + 1..].trim())
-        .unwrap_or(&rhs);
+    let rhs = rhs.find('=').map(|p| rhs[p + 1..].trim()).unwrap_or(&rhs);
     rhs.starts_with('(') && rhs.contains(',') && rhs.len() < 40
 }
 
@@ -398,9 +392,8 @@ fn is_simple_constructor(name: &str, branches: &[Branch], body: &str) -> bool {
 pub(crate) fn sanitize_slug(s: &str) -> String {
     const INVALID: &[char] = &['*', '?', '<', '>', ':', '|', '"', '\\', '/'];
     const RESERVED: &[&str] = &[
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
     let mut slug = String::with_capacity(s.len());
@@ -572,11 +565,7 @@ fn find_fence_close(rest: &[u8]) -> usize {
                 k += 1;
                 spaces += 1;
             }
-            if k + 2 < rest.len()
-                && rest[k] == b'`'
-                && rest[k + 1] == b'`'
-                && rest[k + 2] == b'`'
-            {
+            if k + 2 < rest.len() && rest[k] == b'`' && rest[k + 1] == b'`' && rest[k + 2] == b'`' {
                 // Consume the rest of this line (the closing fence).
                 let mut end = k + 3;
                 while end < rest.len() && rest[end] != b'\n' {
@@ -604,8 +593,7 @@ pub(crate) fn contains_word(text: &str, word: &str) -> bool {
 /// Compute function→function cross-reference edges by scanning bodies.
 /// Only includes edges where both caller and callee appear in `fn_names`.
 pub fn function_call_graph(items: &[Item], fn_names: &[String]) -> Vec<(String, String)> {
-    let name_set: std::collections::HashSet<&str> =
-        fn_names.iter().map(|s| s.as_str()).collect();
+    let name_set: std::collections::HashSet<&str> = fn_names.iter().map(|s| s.as_str()).collect();
     let mut edges = Vec::new();
     for item in items {
         if let Item::Function {
@@ -655,15 +643,24 @@ mod tests {
         let st = SymbolTable::build(&items);
 
         // Type aliases
-        assert_eq!(st.symbols["FleetMode"], ("types.md".into(), "fleetmode".into()));
+        assert_eq!(
+            st.symbols["FleetMode"],
+            ("types.md".into(), "fleetmode".into())
+        );
         assert_eq!(
             st.symbols["ProvisionResult"],
             ("types.md".into(), "provisionresult".into())
         );
 
         // Enum variants map to parent type anchor
-        assert_eq!(st.symbols["FM_Disabled"], ("types.md".into(), "fleetmode".into()));
-        assert_eq!(st.symbols["PR_Succeeded"], ("types.md".into(), "provisionresult".into()));
+        assert_eq!(
+            st.symbols["FM_Disabled"],
+            ("types.md".into(), "fleetmode".into())
+        );
+        assert_eq!(
+            st.symbols["PR_Succeeded"],
+            ("types.md".into(), "provisionresult".into())
+        );
 
         // Record type
         assert_eq!(
@@ -737,9 +734,10 @@ mod tests {
         let items = load_items();
         let st = SymbolTable::build(&items);
 
-        let related = st.related_properties.get("provisionKey").expect(
-            "provisionKey should have related properties",
-        );
+        let related = st
+            .related_properties
+            .get("provisionKey")
+            .expect("provisionKey should have related properties");
         let labels: Vec<&str> = related.iter().map(|(l, _, _)| l.as_str()).collect();
 
         assert!(labels.contains(&"P2"), "P2 should reference provisionKey");
@@ -750,8 +748,14 @@ mod tests {
 
     #[test]
     fn relative_path_computation() {
-        assert_eq!(SymbolTable::relative_path("types.md", "functions/foo.md"), "functions/foo.md");
-        assert_eq!(SymbolTable::relative_path("functions/foo.md", "types.md"), "../types.md");
+        assert_eq!(
+            SymbolTable::relative_path("types.md", "functions/foo.md"),
+            "functions/foo.md"
+        );
+        assert_eq!(
+            SymbolTable::relative_path("functions/foo.md", "types.md"),
+            "../types.md"
+        );
         assert_eq!(
             SymbolTable::relative_path("functions/foo.md", "properties/bar.md"),
             "../properties/bar.md"
@@ -768,7 +772,10 @@ mod tests {
 
     #[test]
     fn anchor_generation() {
-        assert_eq!(property_anchor("P1", "KeyMonotonicity"), "p1--key-monotonicity");
+        assert_eq!(
+            property_anchor("P1", "KeyMonotonicity"),
+            "p1--key-monotonicity"
+        );
         assert_eq!(
             property_anchor("P5", "DisabledRejectsAll"),
             "p5--disabled-rejects-all"
@@ -830,6 +837,9 @@ mod tests {
         assert_eq!(sanitize_slug("com1"), "com1_");
 
         // Normal slugs are unchanged.
-        assert_eq!(sanitize_slug("key-lifecycle-safety"), "key-lifecycle-safety");
+        assert_eq!(
+            sanitize_slug("key-lifecycle-safety"),
+            "key-lifecycle-safety"
+        );
     }
 }

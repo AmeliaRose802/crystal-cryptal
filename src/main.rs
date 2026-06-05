@@ -131,12 +131,7 @@ fn copy_asset_to_images(output: &Path, src: &Path, kind: &str) -> Option<String>
 
 /// Copy logo/favicon assets (if any) into `<output>/images/` and print
 /// the matching docfx `globalMetadata` snippet when --docfx is set.
-fn handle_branding_assets(
-    output: &Path,
-    logo: Option<&Path>,
-    favicon: Option<&Path>,
-    docfx: bool,
-) {
+fn handle_branding_assets(output: &Path, logo: Option<&Path>, favicon: Option<&Path>, docfx: bool) {
     let logo_rel = logo.and_then(|p| copy_asset_to_images(output, p, "logo"));
     let favicon_rel = favicon.and_then(|p| copy_asset_to_images(output, p, "favicon"));
 
@@ -160,10 +155,7 @@ fn handle_branding_assets(
 /// Windows paths like `C:\foo` so it isn't mistaken for the name separator.
 fn parse_extra_docs_arg(arg: &str) -> (PathBuf, Option<String>) {
     let bytes = arg.as_bytes();
-    let search_start = if bytes.len() >= 2
-        && bytes[1] == b':'
-        && bytes[0].is_ascii_alphabetic()
-    {
+    let search_start = if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
         2
     } else {
         0
@@ -240,7 +232,11 @@ fn humanize_basename(name: &str) -> String {
         }
         out.push_str(chars.as_str());
     }
-    if out.is_empty() { name.to_string() } else { out }
+    if out.is_empty() {
+        name.to_string()
+    } else {
+        out
+    }
 }
 
 /// Copy each `--extra-docs` directory into `<output>/<basename>/` and
@@ -342,10 +338,7 @@ fn append_extra_docs_to_toc(output: &Path, entries: &[ExtraDocsEntry]) {
         ));
     }
     if let Err(e) = std::fs::write(&toc_path, existing) {
-        eprintln!(
-            "warning: cannot write updated {}: {e}",
-            toc_path.display()
-        );
+        eprintln!("warning: cannot write updated {}: {e}", toc_path.display());
     }
 }
 
@@ -357,10 +350,7 @@ fn append_extra_docs_to_index(output: &Path, entries: &[ExtraDocsEntry]) {
     if entries.is_empty() {
         return;
     }
-    let linkable: Vec<&ExtraDocsEntry> = entries
-        .iter()
-        .filter(|e| e.md_href.is_some())
-        .collect();
+    let linkable: Vec<&ExtraDocsEntry> = entries.iter().filter(|e| e.md_href.is_some()).collect();
     if linkable.is_empty() {
         return;
     }
@@ -382,9 +372,7 @@ fn append_extra_docs_to_index(output: &Path, entries: &[ExtraDocsEntry]) {
         existing.push('\n');
     }
     existing.push_str("\n## Additional Documentation\n\n");
-    existing.push_str(
-        "This site ships with additional hand-written documentation:\n\n",
-    );
+    existing.push_str("This site ships with additional hand-written documentation:\n\n");
     for entry in linkable {
         let href = entry.md_href.as_deref().unwrap();
         existing.push_str(&format!("- [{}]({})\n", entry.display_name, href));
@@ -503,7 +491,12 @@ fn main() {
                 for module in &mut modules {
                     for item in &mut module.items {
                         match item {
-                            Item::Property { label, name, proof_status, .. } => {
+                            Item::Property {
+                                label,
+                                name,
+                                proof_status,
+                                ..
+                            } => {
                                 // Try `{label}_{name}` (Cryptol convention `P1_FooBar`),
                                 // then `name` alone, then `label` alone.
                                 let full = if label == name {
@@ -521,7 +514,9 @@ fn main() {
                                     consumed_props.insert(full);
                                 }
                             }
-                            Item::Function { name, proof_status, .. } => {
+                            Item::Function {
+                                name, proof_status, ..
+                            } => {
                                 if let Some(status) = manifest.functions.get(name) {
                                     *proof_status = Some(status.clone());
                                 }
@@ -539,7 +534,10 @@ fn main() {
                         if consumed_props.contains(key) {
                             continue;
                         }
-                        if matches!(status, ProofStatus::Failed { .. } | ProofStatus::NotAttempted) {
+                        if matches!(
+                            status,
+                            ProofStatus::Failed { .. } | ProofStatus::NotAttempted
+                        ) {
                             last_module.items.push(Item::Property {
                                 label: key.clone(),
                                 name: key
@@ -636,7 +634,10 @@ fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
 
     render_multi_file_with_prefix(&module.items, symbols, &cli.output, &options, "")
         .unwrap_or_else(|e| {
-            eprintln!("error: {}: render failed: {e}", module.source_path.display());
+            eprintln!(
+                "error: {}: render failed: {e}",
+                module.source_path.display()
+            );
             std::process::exit(2);
         });
     handle_branding_assets(
@@ -700,7 +701,10 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
             &module.output_prefix,
         )
         .unwrap_or_else(|e| {
-            eprintln!("error: {}: render failed: {e}", module.source_path.display());
+            eprintln!(
+                "error: {}: render failed: {e}",
+                module.source_path.display()
+            );
             std::process::exit(2);
         });
     }
@@ -716,9 +720,13 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
     });
 
     if cli.docfx {
-        let mut toc = String::from("- name: Overview\n  href: index.md\n- name: Modules\n  items:\n");
+        let mut toc =
+            String::from("- name: Overview\n  href: index.md\n- name: Modules\n  items:\n");
         for m in modules {
-            toc.push_str(&format!("  - name: {}\n    href: {}/index.md\n", m.module_name, m.output_prefix));
+            toc.push_str(&format!(
+                "  - name: {}\n    href: {}/index.md\n",
+                m.module_name, m.output_prefix
+            ));
         }
         std::fs::write(cli.output.join("toc.yml"), toc).unwrap_or_else(|e| {
             eprintln!("error: cannot write toc.yml: {e}");
@@ -801,9 +809,7 @@ fn load_existing_section(path: &Path, key: &str) -> serde_json::Value {
         Ok(v) => v,
         Err(_) => return serde_json::json!({}),
     };
-    v.get(key)
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}))
+    v.get(key).cloned().unwrap_or_else(|| serde_json::json!({}))
 }
 
 fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
@@ -890,7 +896,10 @@ fn run_adapt_saw_results(dir: &Path, output: &Path) {
     });
 
     if result_files.is_empty() {
-        eprintln!("warning: no result.json files found under {}", dir.display());
+        eprintln!(
+            "warning: no result.json files found under {}",
+            dir.display()
+        );
     }
 
     let mut functions_map = serde_json::Map::new();
@@ -1031,16 +1040,14 @@ fn run_adapt_saw_results(dir: &Path, output: &Path) {
             .map(|s| s.to_string());
 
         let proof_status = match raw_status {
-            "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => {
-                ProofStatus::Proven {
-                    solver: solver.to_string(),
-                    time_secs,
-                    overrides,
-                    iterations,
-                    verify_command: verify_command.clone(),
-                    verify_script: verify_script.clone(),
-                }
-            }
+            "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => ProofStatus::Proven {
+                solver: solver.to_string(),
+                time_secs,
+                overrides,
+                iterations,
+                verify_command: verify_command.clone(),
+                verify_script: verify_script.clone(),
+            },
             "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
                 ProofStatus::Failed {
                     reason: message.unwrap_or_else(|| "counterexample found".into()),
@@ -1158,17 +1165,14 @@ fn run_emit_function_list(modules: &[ModuleBundle], output: &Path, include_priva
                 }
 
                 let arity = count_arity(signature);
-                let doc_summary = doc
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // Use the auto-describe if no doc
-                        use pretty_specs::describe::auto_describe_function;
-                        auto_describe_function(name, signature, branches, body)
-                            .into_iter()
-                            .next()
-                            .unwrap_or_default()
-                    });
+                let doc_summary = doc.first().cloned().unwrap_or_else(|| {
+                    // Use the auto-describe if no doc
+                    use pretty_specs::describe::auto_describe_function;
+                    auto_describe_function(name, signature, branches, body)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default()
+                });
 
                 entries.push(FunctionEntry {
                     module: module.module_name.clone(),

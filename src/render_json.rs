@@ -7,8 +7,7 @@ use std::path::Path;
 /// Serialize items as pretty-printed JSON.
 /// If `output_path` is `None`, write to stdout; otherwise write to the given file.
 pub fn render_json(items: &[Item], output_path: Option<&Path>) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(items)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(items).map_err(std::io::Error::other)?;
     match output_path {
         Some(path) => {
             if let Some(parent) = path.parent() {

@@ -193,9 +193,7 @@ fn parse_parameter_block(text: &str, items: &mut Vec<Item>) {
         }
         // Extract doc comment if present
         let (doc_text, decl_text) = split_doc_and_decl(chunk);
-        let doc: Vec<String> = doc_text
-            .map(|d| clean_doc_lines(&d))
-            .unwrap_or_default();
+        let doc: Vec<String> = doc_text.map(|d| clean_doc_lines(&d)).unwrap_or_default();
 
         let decl_text = decl_text.trim();
         if decl_text.is_empty() {
@@ -365,7 +363,11 @@ fn parse_prim_or_foreign(text: &str, items: &mut Vec<Item>) {
         .unwrap_or(rest);
 
     if let Some(cp) = find_top_level(rest, ':') {
-        let lhs = rest[..cp].trim().trim_start_matches('(').trim_end_matches(')').trim();
+        let lhs = rest[..cp]
+            .trim()
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .trim();
         let name = lhs.split_whitespace().last().unwrap_or("").to_string();
         let sig = rest[cp + 1..].trim().to_string();
         items.push(Item::Function {
@@ -424,7 +426,8 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
                 // Detect kind by leading keyword
                 if decl_text.starts_with("type ") || decl_text.starts_with("type\t") {
                     parse_type_decl(decl_text, items);
-                } else if decl_text.starts_with("property ") || decl_text.starts_with("property\t") {
+                } else if decl_text.starts_with("property ") || decl_text.starts_with("property\t")
+                {
                     parse_property_decl(decl_text, items);
                 } else if decl_text.starts_with("primitive ") {
                     parse_prim_or_foreign(decl_text, items);
@@ -583,9 +586,7 @@ fn extract_params(text: &str) -> Vec<String> {
     }
     if params.is_empty() {
         // No parens — split by whitespace (simple identifiers)
-        text.split_whitespace()
-            .map(|w| w.to_string())
-            .collect()
+        text.split_whitespace().map(|w| w.to_string()).collect()
     } else {
         params
     }
@@ -603,11 +604,7 @@ fn find_top_level(text: &str, target: char) -> Option<usize> {
             ']' => depth_bracket -= 1,
             '{' => depth_brace += 1,
             '}' => depth_brace -= 1,
-            _ if c == target
-                && depth_paren == 0
-                && depth_bracket == 0
-                && depth_brace == 0 =>
-            {
+            _ if c == target && depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 => {
                 return Some(i);
             }
             _ => {}
@@ -927,10 +924,7 @@ fn group_enums(items: &mut Vec<Item>) {
                     } if (fn_sig.trim() == type_name
                         || body_has_type_annotation(fn_body, &type_name))
                         && !fn_body.is_empty()
-                        && fn_name
-                            .chars()
-                            .next()
-                            .is_some_and(|c| c.is_uppercase()) =>
+                        && fn_name.chars().next().is_some_and(|c| c.is_uppercase()) =>
                     {
                         let value = if fn_sig.trim() == type_name {
                             fn_body.clone()
@@ -1055,18 +1049,16 @@ fn group_enums(items: &mut Vec<Item>) {
 }
 
 fn body_has_type_annotation(body: &str, type_name: &str) -> bool {
-    body.split(':')
-        .next_back()
-        .is_some_and(|after_colon| {
-            let cleaned = after_colon.trim();
-            // Strip trailing inline comments
-            let cleaned = if let Some(pos) = cleaned.find("//") {
-                cleaned[..pos].trim()
-            } else {
-                cleaned
-            };
-            cleaned == type_name
-        })
+    body.split(':').next_back().is_some_and(|after_colon| {
+        let cleaned = after_colon.trim();
+        // Strip trailing inline comments
+        let cleaned = if let Some(pos) = cleaned.find("//") {
+            cleaned[..pos].trim()
+        } else {
+            cleaned
+        };
+        cleaned == type_name
+    })
 }
 
 fn extract_variant_value(body: &str, type_name: &str) -> String {
@@ -1097,9 +1089,7 @@ fn attach_docs(items: &mut Vec<Item>) {
     // First, merge consecutive CommentBlocks into one
     let mut i = 0;
     while i + 1 < items.len() {
-        if let (Item::CommentBlock { .. }, Item::CommentBlock { .. }) =
-            (&items[i], &items[i + 1])
-        {
+        if let (Item::CommentBlock { .. }, Item::CommentBlock { .. }) = (&items[i], &items[i + 1]) {
             if let Item::CommentBlock { lines: next_lines } = items.remove(i + 1)
                 && let Item::CommentBlock { lines } = &mut items[i]
             {
@@ -1233,7 +1223,8 @@ fn strip_comment_prefix(line: &str) -> String {
 
 fn is_separator_content(line: &str) -> bool {
     let t = line.trim();
-    t.chars().all(|c| c == '/' || c == '-' || c == '─' || c == ' ')
+    t.chars()
+        .all(|c| c == '/' || c == '-' || c == '─' || c == ' ')
         || (t.starts_with("----") && t.contains(':'))
 }
 
@@ -1324,9 +1315,8 @@ mod tests {
 
     #[test]
     fn parses_import_with_alias_and_hiding() {
-        let items = parse(
-            "module A where\n\nimport Crypto::Hash as H hiding (internalA, internalB)\n",
-        );
+        let items =
+            parse("module A where\n\nimport Crypto::Hash as H hiding (internalA, internalB)\n");
 
         let import = items.into_iter().find_map(|i| match i {
             Item::Import {
@@ -1340,6 +1330,9 @@ mod tests {
         let (module_path, qualifier, hiding) = import.expect("import item");
         assert_eq!(module_path, "Crypto::Hash");
         assert_eq!(qualifier.as_deref(), Some("H"));
-        assert_eq!(hiding, vec!["internalA".to_string(), "internalB".to_string()]);
+        assert_eq!(
+            hiding,
+            vec!["internalA".to_string(), "internalB".to_string()]
+        );
     }
 }

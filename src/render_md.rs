@@ -1,7 +1,7 @@
 // Markdown renderer: emits .md files from linked IR.
 
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io;
@@ -11,7 +11,7 @@ use convert_case::{Case, Casing};
 
 use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::{Branch, Item, ProofStatus};
-use crate::linker::{sanitize_slug, SymbolTable};
+use crate::linker::{SymbolTable, sanitize_slug};
 
 const TYPE_DOC_INTERNAL_MARKERS: &[&str] = &[
     "counterexample",
@@ -65,11 +65,20 @@ pub fn render_multi_file_with_prefix(
     fs::create_dir_all(output_dir)?;
 
     let has_types = items.iter().any(|i| {
-        matches!(i, Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. })
+        matches!(
+            i,
+            Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. }
+        )
     });
 
     let has_functions = items.iter().any(|i| match i {
-        Item::Function { name, signature, branches, body, .. } => {
+        Item::Function {
+            name,
+            signature,
+            branches,
+            body,
+            ..
+        } => {
             (signature.contains("->") || !branches.is_empty())
                 && !is_simple_constructor(name, signature, branches, body)
         }
@@ -80,9 +89,19 @@ pub fn render_multi_file_with_prefix(
 
     let module_name = items
         .iter()
-        .find_map(|i| if let Item::Module { name, .. } = i { Some(name.clone()) } else { None })
+        .find_map(|i| {
+            if let Item::Module { name, .. } = i {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| "Specification".into());
-    let title = options.title_override.as_deref().unwrap_or(&module_name).to_string();
+    let title = options
+        .title_override
+        .as_deref()
+        .unwrap_or(&module_name)
+        .to_string();
 
     let mut index = render_index(items, symbols, options, path_prefix);
     if options.docfx {
@@ -100,7 +119,11 @@ pub fn render_multi_file_with_prefix(
         let mut functions_index = render_functions_index(items, symbols, options, path_prefix);
         if options.docfx {
             let fn_uid = format!("{module_name}.functions");
-            functions_index = format!("{}{}", docfx_frontmatter(&fn_uid, "Functions"), functions_index);
+            functions_index = format!(
+                "{}{}",
+                docfx_frontmatter(&fn_uid, "Functions"),
+                functions_index
+            );
         }
         fs::write(output_dir.join("functions/index.md"), functions_index)?;
         render_function_files(items, symbols, output_dir, options, path_prefix)?;
@@ -136,10 +159,7 @@ pub fn render_single_file(
         })
         .unwrap_or_else(|| ("Specification".into(), vec![]));
 
-    let title = options
-        .title_override
-        .as_deref()
-        .unwrap_or(&module_name);
+    let title = options.title_override.as_deref().unwrap_or(&module_name);
     let _ = writeln!(out, "# {title}\n");
 
     if !module_doc.is_empty() {
@@ -202,10 +222,7 @@ pub fn render_single_file(
                     for (fname, ftype) in fields {
                         let linked_type = symbols.resolve_links_single_file(ftype);
                         let desc = describe_type(ftype);
-                        let _ = writeln!(
-                            out,
-                            "| `{fname}` | {linked_type} | {desc} |"
-                        );
+                        let _ = writeln!(out, "| `{fname}` | {linked_type} | {desc} |");
                     }
                     out.push('\n');
                 }
@@ -218,7 +235,13 @@ pub fn render_single_file(
     let functions: Vec<_> = items
         .iter()
         .filter(|item| match item {
-            Item::Function { name, signature, branches, body, .. } => {
+            Item::Function {
+                name,
+                signature,
+                branches,
+                body,
+                ..
+            } => {
                 (signature.contains("->") || !branches.is_empty())
                     && !is_simple_constructor(name, signature, branches, body)
             }
@@ -325,7 +348,10 @@ pub fn render_single_file(
     let mut current_title = String::new();
 
     for item in items {
-        if let Item::Section { level: 3, title, .. } = item {
+        if let Item::Section {
+            level: 3, title, ..
+        } = item
+        {
             current_title = strip_category_prefix(title);
         }
         if matches!(item, Item::Property { .. }) {
@@ -436,8 +462,7 @@ pub fn render_single_file(
                 // thing — the implementation refutes the claim too.
                 if !intentional_cex {
                     let fn_status = function_status_map(items);
-                    let involved_fn_names =
-                        find_involved_function_names(body, doc, &fn_status);
+                    let involved_fn_names = find_involved_function_names(body, doc, &fn_status);
                     if let Some(callout) =
                         render_implementation_equivalence_callout(&involved_fn_names, &fn_status)
                     {
@@ -494,10 +519,7 @@ fn render_index(
         })
         .unwrap_or_else(|| ("Specification".into(), vec![]));
 
-    let title = options
-        .title_override
-        .as_deref()
-        .unwrap_or(&module_name);
+    let title = options.title_override.as_deref().unwrap_or(&module_name);
     let _ = writeln!(out, "# {title}\n");
 
     if !module_doc.is_empty() {
@@ -596,7 +618,13 @@ fn render_index(
 
     // Functions link
     let has_functions = items.iter().any(|item| match item {
-        Item::Function { name, signature, branches, body, .. } => {
+        Item::Function {
+            name,
+            signature,
+            branches,
+            body,
+            ..
+        } => {
             (signature.contains("->") || !branches.is_empty())
                 && !is_simple_constructor(name, signature, branches, body)
         }
@@ -613,7 +641,10 @@ fn render_index(
         if !fns.is_empty() {
             out.push_str(&render_functions_table(&fns, "functions/"));
         }
-        let _ = writeln!(out, "Per-function detail pages: [functions](functions/index.md)\n");
+        let _ = writeln!(
+            out,
+            "Per-function detail pages: [functions](functions/index.md)\n"
+        );
     }
 
     // Properties by category
@@ -627,7 +658,13 @@ fn render_index(
             items
                 .iter()
                 .filter_map(|i| match i {
-                    Item::Property { label, body, doc, proof_status, .. } => Some((
+                    Item::Property {
+                        label,
+                        body,
+                        doc,
+                        proof_status,
+                        ..
+                    } => Some((
                         label.as_str(),
                         (proof_status, body.as_str(), doc.as_slice()),
                     )),
@@ -655,10 +692,7 @@ fn render_index(
                     "| [{cat_title}](properties/{cat_slug}.md) | {range} | {status_cell} |"
                 );
             } else {
-                let _ = writeln!(
-                    out,
-                    "| [{cat_title}](properties/{cat_slug}.md) | {range} |"
-                );
+                let _ = writeln!(out, "| [{cat_title}](properties/{cat_slug}.md) | {range} |");
             }
         }
         out.push('\n');
@@ -881,7 +915,13 @@ fn render_types(items: &[Item], symbols: &SymbolTable, path_prefix: &str) -> Str
     let functions: Vec<(String, String)> = items
         .iter()
         .filter_map(|item| match item {
-            Item::Function { name, signature, branches, body, .. } => {
+            Item::Function {
+                name,
+                signature,
+                branches,
+                body,
+                ..
+            } => {
                 if !signature.contains("->") && branches.is_empty() {
                     return None;
                 }
@@ -964,10 +1004,7 @@ fn render_types(items: &[Item], symbols: &SymbolTable, path_prefix: &str) -> Str
                     let current_file = prefixed_file(path_prefix, "types.md");
                     let linked_type = symbols.resolve_links(ftype, &current_file);
                     let desc = describe_type(ftype);
-                    let _ = writeln!(
-                        out,
-                        "| `{fname}` | {linked_type} | {desc} |"
-                    );
+                    let _ = writeln!(out, "| `{fname}` | {linked_type} | {desc} |");
                 }
                 out.push('\n');
                 if let Some(fns) = type_to_fns.get(name) {
@@ -1113,9 +1150,8 @@ fn render_function_files(
             //  after the signature — no <details> fold.)
 
             let fn_path = output_dir.join("functions").join(format!("{name}.md"));
-            fs::write(&fn_path, out).map_err(|e| {
-                io::Error::new(e.kind(), format!("{}: {e}", fn_path.display()))
-            })?;
+            fs::write(&fn_path, out)
+                .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", fn_path.display())))?;
         }
     }
     Ok(())
@@ -1136,7 +1172,10 @@ fn render_property_files(
     let mut current_slug = String::new();
 
     for item in items {
-        if let Item::Section { level: 3, title, .. } = item {
+        if let Item::Section {
+            level: 3, title, ..
+        } = item
+        {
             current_title = strip_category_prefix(title);
             current_slug = category_slug_from_title(title);
         }
@@ -1319,8 +1358,7 @@ fn render_property_files(
                 // thing — the implementation refutes the claim too.
                 if !intentional_cex {
                     let fn_status = function_status_map(items);
-                    let involved_fn_names =
-                        find_involved_function_names(body, doc, &fn_status);
+                    let involved_fn_names = find_involved_function_names(body, doc, &fn_status);
                     if let Some(callout) =
                         render_implementation_equivalence_callout(&involved_fn_names, &fn_status)
                     {
@@ -1335,9 +1373,8 @@ fn render_property_files(
         }
 
         let prop_path = output_dir.join("properties").join(format!("{cat_slug}.md"));
-        fs::write(&prop_path, out).map_err(|e| {
-            io::Error::new(e.kind(), format!("{}: {e}", prop_path.display()))
-        })?;
+        fs::write(&prop_path, out)
+            .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", prop_path.display())))?;
     }
 
     Ok(())
@@ -1354,7 +1391,10 @@ fn docfx_frontmatter(uid: &str, title: &str) -> String {
 fn render_docfx_toc(title: &str, items: &[Item]) -> String {
     let has_functions = items.iter().any(|i| matches!(i, Item::Function { .. }));
     let has_types = items.iter().any(|i| {
-        matches!(i, Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. })
+        matches!(
+            i,
+            Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. }
+        )
     });
 
     // Collect property categories (slug, title) in order.
@@ -1362,13 +1402,26 @@ fn render_docfx_toc(title: &str, items: &[Item]) -> String {
     let mut cur_title = String::new();
     let mut cur_slug = String::new();
     for item in items {
-        if let Item::Section { level: 3, title: sec_title, .. } = item {
+        if let Item::Section {
+            level: 3,
+            title: sec_title,
+            ..
+        } = item
+        {
             cur_title = strip_category_prefix(sec_title);
             cur_slug = category_slug_from_title(sec_title);
         }
         if let Item::Property { label, .. } = item {
-            let slug = if cur_slug.is_empty() { "misc".to_string() } else { cur_slug.clone() };
-            let ttl = if cur_title.is_empty() { "Miscellaneous".to_string() } else { cur_title.clone() };
+            let slug = if cur_slug.is_empty() {
+                "misc".to_string()
+            } else {
+                cur_slug.clone()
+            };
+            let ttl = if cur_title.is_empty() {
+                "Miscellaneous".to_string()
+            } else {
+                cur_title.clone()
+            };
             if !cats.iter().any(|(s, _)| s == &slug) {
                 cats.push((slug, ttl));
             }
@@ -1387,7 +1440,9 @@ fn render_docfx_toc(title: &str, items: &[Item]) -> String {
     if !cats.is_empty() {
         out.push_str("- name: Properties\n  items:\n");
         for (slug, cat_title) in &cats {
-            out.push_str(&format!("  - name: {cat_title}\n    href: properties/{slug}.md\n"));
+            out.push_str(&format!(
+                "  - name: {cat_title}\n    href: properties/{slug}.md\n"
+            ));
         }
     }
     out
@@ -1626,7 +1681,8 @@ fn find_involved_symbols(
         if current_file == *target_file {
             continue;
         }
-        if name.len() <= 3 && name.starts_with('P') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        if name.len() <= 3 && name.starts_with('P') && name[1..].chars().all(|c| c.is_ascii_digit())
+        {
             continue;
         }
         if contains_word(&all_text, name) && seen.insert((*name).clone()) {
@@ -1671,7 +1727,8 @@ fn proof_badge(status: &Option<ProofStatus>) -> String {
 /// `--proof-status` input; the spec author's `EXPECTED VERDICT: FAILS`
 /// comment is the authoritative source-level signal.
 fn is_intentional_counterexample(doc: &[String]) -> bool {
-    doc.iter().any(|line| line.contains("EXPECTED VERDICT: FAILS"))
+    doc.iter()
+        .any(|line| line.contains("EXPECTED VERDICT: FAILS"))
 }
 
 /// Loud, unambiguous callout placed immediately below the heading of an
@@ -1695,12 +1752,8 @@ fn proof_detail_line(status: &Option<ProofStatus>) -> Option<String> {
         Some(ProofStatus::Failed { reason, .. }) => {
             Some(format!("**Verification failed:** {reason}"))
         }
-        Some(ProofStatus::NotAttempted) => {
-            Some("**Not yet verified.**".into())
-        }
-        Some(ProofStatus::Assumed) => {
-            Some("**Assumed** (treated as an axiom).".into())
-        }
+        Some(ProofStatus::NotAttempted) => Some("**Not yet verified.**".into()),
+        Some(ProofStatus::Assumed) => Some("**Assumed** (treated as an axiom).".into()),
         _ => None,
     }
 }
@@ -1721,7 +1774,11 @@ fn render_failure_details_callout(status: &Option<ProofStatus>) -> Option<String
             counterexample,
             log_excerpt,
             ..
-        }) => (reason.as_str(), counterexample.as_deref(), log_excerpt.as_deref()),
+        }) => (
+            reason.as_str(),
+            counterexample.as_deref(),
+            log_excerpt.as_deref(),
+        ),
         _ => return None,
     };
     if counterexample.is_none() && log_excerpt.is_none() {
@@ -1816,7 +1873,12 @@ fn render_proof_details_callout(status: &Option<ProofStatus>) -> Option<String> 
             overrides,
             iterations,
             ..
-        }) => (solver.as_str(), *time_secs, overrides.as_slice(), *iterations),
+        }) => (
+            solver.as_str(),
+            *time_secs,
+            overrides.as_slice(),
+            *iterations,
+        ),
         _ => return None,
     };
     if overrides.is_empty() && iterations.is_none() {
@@ -1835,7 +1897,11 @@ fn render_proof_details_callout(status: &Option<ProofStatus>) -> Option<String> 
     }
     if !overrides.is_empty() {
         let _ = writeln!(out, ">");
-        let plural = if overrides.len() == 1 { "override" } else { "overrides" };
+        let plural = if overrides.len() == 1 {
+            "override"
+        } else {
+            "overrides"
+        };
         let _ = writeln!(
             out,
             "> Used {n} {plural} — each is **trusted** to behave per its spec and not re-verified here:",
@@ -1998,11 +2064,7 @@ fn render_implementation_equivalence_callout(
             );
         }
         if !failed.is_empty() {
-            let _ = writeln!(
-                out,
-                "> - ✗ equivalence proof **failed**: {}",
-                fmt(&failed)
-            );
+            let _ = writeln!(out, "> - ✗ equivalence proof **failed**: {}", fmt(&failed));
         }
         if !unverified.is_empty() {
             let _ = writeln!(
@@ -2114,16 +2176,16 @@ fn anchor_for(label: &str, name: &str) -> String {
 }
 
 /// Collect categories in document order for the index table.
-fn collect_categories(
-    items: &[Item],
-    symbols: &SymbolTable,
-) -> Vec<(String, String, Vec<String>)> {
+fn collect_categories(items: &[Item], symbols: &SymbolTable) -> Vec<(String, String, Vec<String>)> {
     let mut result: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut current_title = String::new();
     let mut current_slug = String::new();
 
     for item in items {
-        if let Item::Section { level: 3, title, .. } = item {
+        if let Item::Section {
+            level: 3, title, ..
+        } = item
+        {
             current_title = strip_category_prefix(title);
             current_slug = category_slug_from_title(title);
         }
@@ -2195,10 +2257,7 @@ fn is_simple_constructor(name: &str, _signature: &str, branches: &[Branch], body
         .map(|l| l.trim())
         .collect::<Vec<_>>()
         .join(" ");
-    let rhs = rhs
-        .find('=')
-        .map(|p| rhs[p + 1..].trim())
-        .unwrap_or(&rhs);
+    let rhs = rhs.find('=').map(|p| rhs[p + 1..].trim()).unwrap_or(&rhs);
     // Only treat as constructor if the body is a tuple literal like "(False, zero)"
     // or "(True, u)".  This catches Option-style some/none constructors but not
     // real functions like hmacSha256, lpField, etc.
@@ -2212,12 +2271,7 @@ fn is_simple_constructor(name: &str, _signature: &str, branches: &[Branch], body
 /// distinguish "constant" from "function"), but they aren't really functions
 /// and shouldn't be listed in the Functions index next to real decision
 /// procedures.
-fn is_constant_binding(
-    name: &str,
-    signature: &str,
-    body: &str,
-    branches: &[Branch],
-) -> bool {
+fn is_constant_binding(name: &str, signature: &str, body: &str, branches: &[Branch]) -> bool {
     // A real function has either a top-level arrow signature or branching logic.
     if signature.contains("->") {
         return false;
@@ -2346,11 +2400,12 @@ fn parse_signature(signature: &str) -> ParsedSignature {
         ..ParsedSignature::default()
     };
 
-    let (schema_part, core_part) = if let Some((left, right)) = split_top_level_once(&normalized, "=>") {
-        (Some(left.trim()), right.trim())
-    } else {
-        (None, normalized.as_str())
-    };
+    let (schema_part, core_part) =
+        if let Some((left, right)) = split_top_level_once(&normalized, "=>") {
+            (Some(left.trim()), right.trim())
+        } else {
+            (None, normalized.as_str())
+        };
 
     if let Some(schema) = schema_part {
         let mut rest = schema.to_string();
@@ -2654,14 +2709,19 @@ fn render_call_graph_mermaid(
     function_names: &[String],
     items: &[Item],
 ) -> String {
-
     // Classify functions:
     //   decision = multi-branch if/else
     //   stub = declared but no definition body (type signature only)
     let mut decision_fns: HashSet<String> = HashSet::new();
     let mut stub_fns: HashSet<String> = HashSet::new();
     for item in items {
-        if let Item::Function { name, branches, body, .. } = item {
+        if let Item::Function {
+            name,
+            branches,
+            body,
+            ..
+        } = item
+        {
             if branches.is_empty() && !body.contains('=') {
                 stub_fns.insert(name.clone());
             } else if branches.len() > 1 {
@@ -2706,9 +2766,18 @@ fn render_call_graph_mermaid(
     }
 
     // Styling — Mermaid-friendly palette with high-contrast text.
-    let _ = writeln!(out, "  classDef default fill:#f8fafc,stroke:#475569,stroke-width:1.5px,color:#0f172a");
-    let _ = writeln!(out, "  classDef decision fill:#ecfeff,stroke:#0e7490,stroke-width:1.5px,color:#164e63");
-    let _ = writeln!(out, "  classDef stub fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px,stroke-dasharray: 5 5,color:#7c2d12");
+    let _ = writeln!(
+        out,
+        "  classDef default fill:#f8fafc,stroke:#475569,stroke-width:1.5px,color:#0f172a"
+    );
+    let _ = writeln!(
+        out,
+        "  classDef decision fill:#ecfeff,stroke:#0e7490,stroke-width:1.5px,color:#164e63"
+    );
+    let _ = writeln!(
+        out,
+        "  classDef stub fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px,stroke-dasharray: 5 5,color:#7c2d12"
+    );
     let _ = writeln!(out, "```\n");
 
     // Legend
@@ -2750,10 +2819,7 @@ fn render_flowchart_mermaid(name: &str, branches: &[Branch]) -> Option<String> {
             let clabel = sanitize_mermaid(cond);
             match edge_label {
                 Some(label) => {
-                    let _ = writeln!(
-                        out,
-                        "  {prev} -->|{label}| {cid}{{\"{clabel}\"}}"
-                    );
+                    let _ = writeln!(out, "  {prev} -->|{label}| {cid}{{\"{clabel}\"}}");
                 }
                 None => {
                     let _ = writeln!(out, "  {prev} --> {cid}{{\"{clabel}\"}}");
@@ -2773,10 +2839,7 @@ fn render_flowchart_mermaid(name: &str, branches: &[Branch]) -> Option<String> {
             let rlabel = sanitize_mermaid(&branch.result);
             match edge_label {
                 Some(label) => {
-                    let _ = writeln!(
-                        out,
-                        "  {prev} -->|{label}| {rid}(\"{rlabel}\")"
-                    );
+                    let _ = writeln!(out, "  {prev} -->|{label}| {rid}(\"{rlabel}\")");
                 }
                 None => {
                     let _ = writeln!(out, "  {prev} --> {rid}(\"{rlabel}\")");
@@ -2788,16 +2851,19 @@ fn render_flowchart_mermaid(name: &str, branches: &[Branch]) -> Option<String> {
     }
 
     // Styling
-    let _ = writeln!(out, "  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0");
-    let _ = writeln!(out, "  style Start fill:#1565C0,stroke:#0D47A1,color:#fff,stroke-width:2px");
+    let _ = writeln!(
+        out,
+        "  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0"
+    );
+    let _ = writeln!(
+        out,
+        "  style Start fill:#1565C0,stroke:#0D47A1,color:#fff,stroke-width:2px"
+    );
     let _ = writeln!(out, "```");
     Some(out)
 }
 
-fn render_coverage_map_mermaid(
-    symbols: &SymbolTable,
-    fn_names: &[String],
-) -> String {
+fn render_coverage_map_mermaid(symbols: &SymbolTable, fn_names: &[String]) -> String {
     if symbols.related_properties.is_empty() {
         return String::new();
     }
@@ -2846,7 +2912,11 @@ fn render_coverage_map_mermaid(
 
     // Node definitions with click links
     for prop in &sorted_props {
-        let slug = symbols.property_categories.get(*prop).cloned().unwrap_or_else(|| "misc".into());
+        let slug = symbols
+            .property_categories
+            .get(*prop)
+            .cloned()
+            .unwrap_or_else(|| "misc".into());
         let _ = writeln!(out, "  {prop}[\"{prop}\"]");
         let _ = writeln!(out, "  click {prop} \"properties/{slug}.md\" \"{prop}\"");
     }
@@ -2863,9 +2933,15 @@ fn render_coverage_map_mermaid(
     }
 
     // Styling
-    let _ = writeln!(out, "  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0");
+    let _ = writeln!(
+        out,
+        "  classDef default fill:#e8f4fd,stroke:#2196F3,stroke-width:2px,color:#1565C0"
+    );
     if !uncovered.is_empty() {
-        let _ = writeln!(out, "  classDef gap fill:#fff3e0,stroke:#FF9800,stroke-width:2px,stroke-dasharray: 5 5,color:#E65100");
+        let _ = writeln!(
+            out,
+            "  classDef gap fill:#fff3e0,stroke:#FF9800,stroke-width:2px,stroke-dasharray: 5 5,color:#E65100"
+        );
     }
     let _ = writeln!(out, "```\n");
     out
@@ -2893,7 +2969,10 @@ mod tests {
             docfx: false,
         };
         let index = render_index(&items, &symbols, &options, "");
-        assert!(index.contains("# SDEP"), "index should contain module title");
+        assert!(
+            index.contains("# SDEP"),
+            "index should contain module title"
+        );
     }
 
     #[test]
@@ -2933,8 +3012,14 @@ mod tests {
         let items = load_items();
         let symbols = SymbolTable::build(&items);
         let types = render_types(&items, &symbols, "");
-        assert!(types.contains("### FleetMode"), "types should contain FleetMode enum");
-        assert!(types.contains("`FM_Disabled`"), "types should list FM_Disabled");
+        assert!(
+            types.contains("### FleetMode"),
+            "types should contain FleetMode enum"
+        );
+        assert!(
+            types.contains("`FM_Disabled`"),
+            "types should list FM_Disabled"
+        );
     }
 
     #[test]
@@ -2953,7 +3038,10 @@ mod tests {
         let items = load_items();
         let symbols = SymbolTable::build(&items);
         let types = render_types(&items, &symbols, "");
-        assert!(types.contains("### UUID"), "type aliases should render as headings");
+        assert!(
+            types.contains("### UUID"),
+            "type aliases should render as headings"
+        );
     }
 
     #[test]
@@ -3031,8 +3119,7 @@ mod tests {
         let _ = stdfs::remove_dir_all(&tmpdir);
         render_multi_file(&items, &symbols, &tmpdir, &options).expect("render failed");
 
-        let provision =
-            stdfs::read_to_string(tmpdir.join("functions/provisionKey.md")).unwrap();
+        let provision = stdfs::read_to_string(tmpdir.join("functions/provisionKey.md")).unwrap();
         assert!(
             !provision.contains("<details>"),
             "no_details should suppress detail folds"
@@ -3110,10 +3197,16 @@ mod tests {
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(out.contains("Proof details"), "header missing: {out}");
         assert!(out.contains("`z3`"), "solver missing: {out}");
-        assert!(out.contains("**4 loop iterations**"), "iterations missing: {out}");
+        assert!(
+            out.contains("**4 loop iterations**"),
+            "iterations missing: {out}"
+        );
         assert!(out.contains("2 overrides"), "override count missing: {out}");
         assert!(out.contains("`memcpy`"), "override name missing: {out}");
-        assert!(out.contains("`operator new`"), "override name missing: {out}");
+        assert!(
+            out.contains("`operator new`"),
+            "override name missing: {out}"
+        );
         assert!(out.contains("12.30s"), "wall-clock missing: {out}");
     }
 
@@ -3128,7 +3221,10 @@ mod tests {
             verify_script: None,
         });
         let out = render_proof_details_callout(&status).expect("callout present");
-        assert!(out.contains("**1 loop iteration**"), "singular missing: {out}");
+        assert!(
+            out.contains("**1 loop iteration**"),
+            "singular missing: {out}"
+        );
         assert!(!out.contains("iterations**"), "incorrect plural: {out}");
     }
 
@@ -3171,7 +3267,10 @@ mod tests {
         });
         let out = render_failure_details_callout(&status).expect("callout present");
         assert!(out.contains("Why this failed"), "header missing: {out}");
-        assert!(out.contains("counterexample found"), "reason missing: {out}");
+        assert!(
+            out.contains("counterexample found"),
+            "reason missing: {out}"
+        );
         assert!(
             out.contains("<details><summary>Counterexample</summary>"),
             "counterexample fold missing: {out}"
@@ -3196,9 +3295,18 @@ mod tests {
         let doc = render_single_file(&items, &symbols, &options);
         assert!(doc.contains("# SDEP"), "should contain module title");
         assert!(doc.contains("## Types"), "should contain Types section");
-        assert!(doc.contains("## Functions"), "should contain Functions section");
-        assert!(doc.contains("### FleetMode"), "should contain FleetMode type");
-        assert!(doc.contains("### `provisionKey`"), "should contain provisionKey function");
+        assert!(
+            doc.contains("## Functions"),
+            "should contain Functions section"
+        );
+        assert!(
+            doc.contains("### FleetMode"),
+            "should contain FleetMode type"
+        );
+        assert!(
+            doc.contains("### `provisionKey`"),
+            "should contain provisionKey function"
+        );
     }
 
     #[test]
@@ -3254,21 +3362,20 @@ property P99_TemptingButFalse x = x > 0
         };
         render_multi_file(&items, &symbols, &tmpdir, &options).unwrap();
 
-        let cat_md = stdfs::read_to_string(
-            tmpdir.join("properties/intentional-counterexamples.md"),
-        )
-        .unwrap_or_else(|_| {
-            // Fall back to whatever single category file was produced — the
-            // test fixture only contains one section so there's exactly one.
-            let dir = tmpdir.join("properties");
-            let first = stdfs::read_dir(&dir)
-                .unwrap()
-                .next()
-                .expect("expected at least one category file")
-                .unwrap()
-                .path();
-            stdfs::read_to_string(first).unwrap()
-        });
+        let cat_md =
+            stdfs::read_to_string(tmpdir.join("properties/intentional-counterexamples.md"))
+                .unwrap_or_else(|_| {
+                    // Fall back to whatever single category file was produced — the
+                    // test fixture only contains one section so there's exactly one.
+                    let dir = tmpdir.join("properties");
+                    let first = stdfs::read_dir(&dir)
+                        .unwrap()
+                        .next()
+                        .expect("expected at least one category file")
+                        .unwrap()
+                        .path();
+                    stdfs::read_to_string(first).unwrap()
+                });
 
         assert!(
             cat_md.contains("### ✗ P99"),
@@ -3279,8 +3386,7 @@ property P99_TemptingButFalse x = x > 0
             "loud disproven callout missing, got:\n{cat_md}"
         );
         assert!(
-            cat_md.contains("**How to read this page.**")
-                && cat_md.contains("deliberately false"),
+            cat_md.contains("**How to read this page.**") && cat_md.contains("deliberately false"),
             "page-level intro should swap to the deliberately-false variant, got:\n{cat_md}"
         );
         assert!(
@@ -3339,7 +3445,8 @@ property P99_TemptingButFalse x = x > 0
 
     #[test]
     fn parse_signature_splits_schema_params_and_return() {
-        let sig = "{k, n} (width (8 * k) <= B, width (8 * (n + B)) <= B) => [k][8] -> [n][8] -> [L][8]";
+        let sig =
+            "{k, n} (width (8 * k) <= B, width (8 * (n + B)) <= B) => [k][8] -> [n][8] -> [L][8]";
         let parsed = parse_signature(sig);
 
         assert_eq!(parsed.type_params, vec!["k", "n"]);

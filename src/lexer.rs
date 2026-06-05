@@ -11,8 +11,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     // Literals
-    Num(u64, u8),     // value, base (10/16/2/8)
-    Frac(String),     // kept as string
+    Num(u64, u8), // value, base (10/16/2/8)
+    Frac(String), // kept as string
     StrLit(String),
     ChrLit(char),
 
@@ -326,7 +326,8 @@ fn strip_block_comments(source: &str) -> (String, Vec<DocComment>) {
     // Preserve non-comment bytes
     while i < bytes.len() {
         if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let is_doc = i + 2 < bytes.len() && bytes[i + 2] == b'*'
+            let is_doc = i + 2 < bytes.len()
+                && bytes[i + 2] == b'*'
                 && !(i + 3 < bytes.len() && bytes[i + 3] == b'*');
             let start = i;
             i += 2;
@@ -500,9 +501,7 @@ fn raw_to_tok(raw: &RawTok, text: &str) -> Option<Tok> {
         RawTok::SelectorIdent => Tok::Selector(text[1..].to_string()),
         RawTok::SelectorNum => Tok::Selector(text[1..].to_string()),
 
-        RawTok::StrLit => {
-            Tok::StrLit(text[1..text.len() - 1].to_string())
-        }
+        RawTok::StrLit => Tok::StrLit(text[1..text.len() - 1].to_string()),
         RawTok::ChrLit => {
             let inner = &text[1..text.len() - 1];
             let ch = if inner.starts_with('\\') {
@@ -777,8 +776,6 @@ pub fn lex(source: &str) -> Result<LexOutput, LexError> {
 
     Ok((result, block_docs))
 }
-
-
 
 #[cfg(test)]
 mod tests {

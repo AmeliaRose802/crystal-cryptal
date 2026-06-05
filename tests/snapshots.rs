@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::Path;
 
-use pretty_specs::ir::{load_proof_manifest, Item};
+use pretty_specs::ir::{Item, load_proof_manifest};
 use pretty_specs::linker::SymbolTable;
 use pretty_specs::parser::parse;
-use pretty_specs::render_md::{render_multi_file, render_single_file, RenderOptions};
+use pretty_specs::render_md::{RenderOptions, render_multi_file, render_single_file};
 
 fn load_sdep() -> (Vec<Item>, SymbolTable) {
     let source = fs::read_to_string("tests/fixtures/SDEP.cry").expect("fixture");
@@ -161,7 +161,11 @@ fn empty_input_does_not_panic() {
     // multi-file mode
     let dir = render_to("empty");
     render_multi_file(&items, &symbols, &dir, &default_options()).unwrap();
-    assert!(fs::read_to_string(dir.join("index.md")).unwrap().contains("Specification"));
+    assert!(
+        fs::read_to_string(dir.join("index.md"))
+            .unwrap()
+            .contains("Specification")
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -189,14 +193,22 @@ fn utf8_bom_is_stripped() {
     // Strip BOM the same way main.rs does
     let stripped = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     let items = parse(stripped);
-    assert!(items.iter().any(|item| matches!(item, Item::Module { name, .. } if name == "BomTest")));
+    assert!(
+        items
+            .iter()
+            .any(|item| matches!(item, Item::Module { name, .. } if name == "BomTest"))
+    );
 }
 
 #[test]
 fn windows_line_endings() {
     let source = "module WinTest where\r\n\r\ntype Foo = [8]\r\n";
     let items = parse(source);
-    assert!(items.iter().any(|item| matches!(item, Item::Module { name, .. } if name == "WinTest")));
+    assert!(
+        items
+            .iter()
+            .any(|item| matches!(item, Item::Module { name, .. } if name == "WinTest"))
+    );
 }
 
 // The home-page / functions-index call graph was retired (it didn't pull

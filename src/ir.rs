@@ -266,8 +266,8 @@ pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
 
     // Extended format: top-level object has a "properties" key.
     if value.get("properties").is_some() {
-        let manifest: ExtendedManifest = serde_json::from_value(value)
-            .map_err(|e| format!("failed to parse manifest: {e}"))?;
+        let manifest: ExtendedManifest =
+            serde_json::from_value(value).map_err(|e| format!("failed to parse manifest: {e}"))?;
         let properties = manifest
             .properties
             .into_iter()
@@ -279,7 +279,10 @@ pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
             .into_iter()
             .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
             .collect();
-        return Ok(ProofManifest { properties, functions });
+        return Ok(ProofManifest {
+            properties,
+            functions,
+        });
     }
 
     // Flat (legacy) format: treat entire object as properties map.
@@ -389,10 +392,7 @@ mod tests {
             ProofStatus::Proven { solver, .. } if solver == "z3"
         ));
         assert!(matches!(map.get("P8").unwrap(), ProofStatus::Assumed));
-        assert!(matches!(
-            map.get("P22").unwrap(),
-            ProofStatus::NotAttempted
-        ));
+        assert!(matches!(map.get("P22").unwrap(), ProofStatus::NotAttempted));
         assert!(matches!(
             map.get("P99").unwrap(),
             ProofStatus::Failed { reason, .. } if reason == "counterexample found"
@@ -416,16 +416,26 @@ mod tests {
             }
         }"#;
 
-        let manifest = load_proof_manifest(std::path::Path::new("/dev/null"))
-            .unwrap_or_else(|_| {
+        let manifest =
+            load_proof_manifest(std::path::Path::new("/dev/null")).unwrap_or_else(|_| {
                 // parse directly since we can't write a temp file in a unit test portably
                 let v: serde_json::Value = serde_json::from_str(json).unwrap();
                 let m: ExtendedManifest = serde_json::from_value(v).unwrap();
-                let properties = m.properties.into_iter()
-                    .map(|(k, v)| (k, ProofStatus::from(v))).collect();
-                let functions = m.functions.unwrap_or_default().into_iter()
-                    .map(|(k, v)| (k, ProofStatus::from(v.into_overall()))).collect();
-                ProofManifest { properties, functions }
+                let properties = m
+                    .properties
+                    .into_iter()
+                    .map(|(k, v)| (k, ProofStatus::from(v)))
+                    .collect();
+                let functions = m
+                    .functions
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
+                    .collect();
+                ProofManifest {
+                    properties,
+                    functions,
+                }
             });
 
         assert!(matches!(
@@ -450,7 +460,9 @@ mod tests {
 
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
         let m: ExtendedManifest = serde_json::from_value(v).unwrap();
-        let functions: HashMap<String, ProofStatus> = m.functions.unwrap_or_default()
+        let functions: HashMap<String, ProofStatus> = m
+            .functions
+            .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
             .collect();
@@ -481,21 +493,27 @@ private
 "#;
         let items = parse(src);
 
-        let pub_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "pub"));
+        let pub_item = items
+            .iter()
+            .find(|i| matches!(i, Item::Function { name, .. } if name == "pub"));
         if let Some(Item::Function { is_private, .. }) = pub_item {
             assert!(!is_private, "pub should not be marked private");
         } else {
             panic!("pub function not found");
         }
 
-        let helper_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "helper"));
+        let helper_item = items
+            .iter()
+            .find(|i| matches!(i, Item::Function { name, .. } if name == "helper"));
         if let Some(Item::Function { is_private, .. }) = helper_item {
             assert!(is_private, "helper should be marked private");
         } else {
             panic!("helper function not found");
         }
 
-        let helperb_item = items.iter().find(|i| matches!(i, Item::Function { name, .. } if name == "helperB"));
+        let helperb_item = items
+            .iter()
+            .find(|i| matches!(i, Item::Function { name, .. } if name == "helperB"));
         if let Some(Item::Function { is_private, .. }) = helperb_item {
             assert!(is_private, "helperB should be marked private");
         } else {
@@ -516,7 +534,10 @@ private
             is_private: false,
         };
         let json = serde_json::to_string(&item).unwrap();
-        assert!(!json.contains("is_private"), "is_private=false should be omitted from JSON");
+        assert!(
+            !json.contains("is_private"),
+            "is_private=false should be omitted from JSON"
+        );
     }
 
     #[test]
@@ -532,6 +553,9 @@ private
             is_private: true,
         };
         let json = serde_json::to_string(&item).unwrap();
-        assert!(json.contains("is_private"), "is_private=true should be present in JSON");
+        assert!(
+            json.contains("is_private"),
+            "is_private=true should be present in JSON"
+        );
     }
 }
