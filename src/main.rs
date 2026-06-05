@@ -65,6 +65,287 @@ struct Cli {
     /// Emit DocFX-compatible front-matter and toc.yml alongside each index.md
     #[arg(long)]
     docfx: bool,
+
+    /// Path to a logo image (svg/png) to copy into <output>/images/.
+    /// When combined with --docfx, prints the matching `_appLogoPath`
+    /// globalMetadata snippet to stderr.
+    #[arg(long, value_name = "PATH")]
+    logo: Option<PathBuf>,
+
+    /// Path to a favicon (.ico/.png/.svg) to copy into <output>/images/.
+    /// When combined with --docfx, prints the matching `_appFaviconPath`
+    /// globalMetadata snippet to stderr.
+    #[arg(long, value_name = "PATH")]
+    favicon: Option<PathBuf>,
+
+    /// Directory of additional Markdown (and supporting) files to include
+    /// verbatim in the generated site. Each directory is copied into
+    /// `<output>/<basename>/` preserving structure. In `--docfx` mode an
+    /// entry is appended to the top-level `toc.yml` so the pages appear in
+    /// the navbar. May be repeated to include multiple directories.
+    ///
+    /// Optional syntax `DIR:Display Name` overrides the toc label;
+    /// otherwise the directory basename (Title Case) is used.
+    #[arg(long = "extra-docs", value_name = "DIR[:NAME]")]
+    extra_docs: Vec<String>,
+}
+
+/// Copy `src` into `<output>/images/<basename>`, creating the directory
+/// if needed. Returns the basename so callers can build a docfx-relative
+/// reference (e.g. "images/logo.svg").
+fn copy_asset_to_images(output: &Path, src: &Path, kind: &str) -> Option<String> {
+    let file_name = match src.file_name().and_then(|s| s.to_str()) {
+        Some(n) => n.to_string(),
+        None => {
+            eprintln!(
+                "warning: --{kind} path {} has no filename, skipping copy",
+                src.display()
+            );
+            return None;
+        }
+    };
+    let images_dir = output.join("images");
+    if let Err(e) = std::fs::create_dir_all(&images_dir) {
+        eprintln!(
+            "warning: cannot create {}: {e} (skipping --{kind})",
+            images_dir.display()
+        );
+        return None;
+    }
+    let dest = images_dir.join(&file_name);
+    match std::fs::copy(src, &dest) {
+        Ok(_) => {
+            eprintln!("copied {} → {}", src.display(), dest.display());
+            Some(format!("images/{file_name}"))
+        }
+        Err(e) => {
+            eprintln!(
+                "warning: cannot copy {} → {}: {e}",
+                src.display(),
+                dest.display()
+            );
+            None
+        }
+    }
+}
+
+/// Copy logo/favicon assets (if any) into `<output>/images/` and print
+/// the matching docfx `globalMetadata` snippet when --docfx is set.
+fn handle_branding_assets(
+    output: &Path,
+    logo: Option<&Path>,
+    favicon: Option<&Path>,
+    docfx: bool,
+) {
+    let logo_rel = logo.and_then(|p| copy_asset_to_images(output, p, "logo"));
+    let favicon_rel = favicon.and_then(|p| copy_asset_to_images(output, p, "favicon"));
+
+    if !docfx || (logo_rel.is_none() && favicon_rel.is_none()) {
+        return;
+    }
+
+    eprintln!();
+    eprintln!("docfx: add the following to docfx.json `globalMetadata` (paths are");
+    eprintln!("docfx: relative to the generated site root):");
+    if let Some(p) = &logo_rel {
+        eprintln!("  \"_appLogoPath\": \"{p}\",");
+    }
+    if let Some(p) = &favicon_rel {
+        eprintln!("  \"_appFaviconPath\": \"{p}\",");
+    }
+}
+
+/// Parse a `--extra-docs` argument of the form `DIR` or `DIR:Display Name`.
+/// Returns `(dir, display_name_override)`. Skips the drive-letter colon on
+/// Windows paths like `C:\foo` so it isn't mistaken for the name separator.
+fn parse_extra_docs_arg(arg: &str) -> (PathBuf, Option<String>) {
+    let bytes = arg.as_bytes();
+    let search_start = if bytes.len() >= 2
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+    {
+        2
+    } else {
+        0
+    };
+    if let Some(idx) = arg[search_start..].find(':') {
+        let split = search_start + idx;
+        let dir = &arg[..split];
+        let name = arg[split + 1..].trim();
+        if !name.is_empty() {
+            return (PathBuf::from(dir), Some(name.to_string()));
+        }
+    }
+    (PathBuf::from(arg), None)
+}
+
+/// Recursively copy every file under `src` into `dest`, preserving directory
+/// structure. Skips hidden entries (names starting with `.`). Returns the
+/// number of files copied.
+fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<usize> {
+    let mut copied = 0usize;
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') {
+            continue;
+        }
+        let src_path = entry.path();
+        let dest_path = dest.join(&name);
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copied += copy_dir_recursive(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dest_path)?;
+            copied += 1;
+        }
+        // Symlinks and other entry kinds are skipped.
+    }
+    Ok(copied)
+}
+
+/// A resolved extra-docs entry, ready to be wired into the top-level toc.
+struct ExtraDocsEntry {
+    display_name: String,
+    /// Optional toc-target href (`<basename>/toc.yml` or `<basename>/index.md`).
+    /// `None` when the source dir has no obvious entry point — files are
+    /// still copied so docfx picks them up via its content glob.
+    href: Option<String>,
+}
+
+/// Title-case a directory basename for use as a toc label. Splits on `-`,
+/// `_`, and whitespace and uppercases each word's first letter.
+fn humanize_basename(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut first = true;
+    for word in name.split(|c: char| c == '-' || c == '_' || c.is_whitespace()) {
+        if word.is_empty() {
+            continue;
+        }
+        if !first {
+            out.push(' ');
+        }
+        first = false;
+        let mut chars = word.chars();
+        if let Some(c) = chars.next() {
+            for u in c.to_uppercase() {
+                out.push(u);
+            }
+        }
+        out.push_str(chars.as_str());
+    }
+    if out.is_empty() { name.to_string() } else { out }
+}
+
+/// Copy each `--extra-docs` directory into `<output>/<basename>/` and
+/// return the resolved toc entries in the order given on the command line.
+/// Warnings (not errors) are emitted for missing or unreadable directories.
+fn copy_extra_docs(output: &Path, extra_docs: &[String]) -> Vec<ExtraDocsEntry> {
+    let mut entries = Vec::new();
+    for raw in extra_docs {
+        let (dir, name_override) = parse_extra_docs_arg(raw);
+        if !dir.is_dir() {
+            eprintln!(
+                "warning: --extra-docs {}: not a directory (skipped)",
+                dir.display()
+            );
+            continue;
+        }
+        let basename = match dir.file_name().and_then(|s| s.to_str()) {
+            Some(b) => b.to_string(),
+            None => {
+                eprintln!(
+                    "warning: --extra-docs {}: cannot derive basename (skipped)",
+                    dir.display()
+                );
+                continue;
+            }
+        };
+        let dest = output.join(&basename);
+        match copy_dir_recursive(&dir, &dest) {
+            Ok(n) => eprintln!(
+                "copied {n} file(s) from {} → {}",
+                dir.display(),
+                dest.display()
+            ),
+            Err(e) => {
+                eprintln!(
+                    "warning: --extra-docs {}: copy failed: {e} (skipped)",
+                    dir.display()
+                );
+                continue;
+            }
+        }
+
+        let href = if dest.join("toc.yml").is_file() {
+            Some(format!("{basename}/toc.yml"))
+        } else if dest.join("index.md").is_file() {
+            Some(format!("{basename}/index.md"))
+        } else {
+            eprintln!(
+                "note: --extra-docs {}: no toc.yml or index.md at root; skipping toc entry",
+                dir.display()
+            );
+            None
+        };
+
+        let display_name = name_override.unwrap_or_else(|| humanize_basename(&basename));
+        entries.push(ExtraDocsEntry { display_name, href });
+    }
+    entries
+}
+
+/// Append extra-docs entries to the top-level `toc.yml` at `<output>/toc.yml`.
+/// No-op when there are no entries or when the toc.yml doesn't exist
+/// (i.e. `--docfx` was not used).
+fn append_extra_docs_to_toc(output: &Path, entries: &[ExtraDocsEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    let toc_path = output.join("toc.yml");
+    if !toc_path.is_file() {
+        return;
+    }
+    let mut existing = match std::fs::read_to_string(&toc_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "warning: cannot read {} to append --extra-docs entries: {e}",
+                toc_path.display()
+            );
+            return;
+        }
+    };
+    if !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    for entry in entries {
+        let Some(href) = &entry.href else { continue };
+        existing.push_str(&format!(
+            "- name: {}\n  href: {}\n",
+            entry.display_name, href
+        ));
+    }
+    if let Err(e) = std::fs::write(&toc_path, existing) {
+        eprintln!(
+            "warning: cannot write updated {}: {e}",
+            toc_path.display()
+        );
+    }
+}
+
+/// Copy `--extra-docs` directories and (in `--docfx` mode) patch the
+/// top-level `toc.yml` so the pages appear in the navbar.
+fn handle_extra_docs(output: &Path, extra_docs: &[String], docfx: bool) {
+    if extra_docs.is_empty() {
+        return;
+    }
+    let entries = copy_extra_docs(output, extra_docs);
+    if docfx {
+        append_extra_docs_to_toc(output, &entries);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -159,10 +440,22 @@ fn main() {
                 for module in &mut modules {
                     for item in &mut module.items {
                         match item {
-                            Item::Property { label, proof_status, .. } => {
-                                if let Some(status) = manifest.properties.get(label) {
+                            Item::Property { label, name, proof_status, .. } => {
+                                // Try `{label}_{name}` (Cryptol convention `P1_FooBar`),
+                                // then `name` alone, then `label` alone.
+                                let full = if label == name {
+                                    label.clone()
+                                } else {
+                                    format!("{label}_{name}")
+                                };
+                                let lookup = manifest
+                                    .properties
+                                    .get(&full)
+                                    .or_else(|| manifest.properties.get(name))
+                                    .or_else(|| manifest.properties.get(label));
+                                if let Some(status) = lookup {
                                     *proof_status = Some(status.clone());
-                                    consumed_props.insert(label.clone());
+                                    consumed_props.insert(full);
                                 }
                             }
                             Item::Function { name, proof_status, .. } => {
@@ -233,7 +526,15 @@ fn main() {
     run_multi_module(cli, &modules, &unified_symbols);
 }
 
-fn run_single_module(cli: Cli, module: &ModuleBundle, symbols: &SymbolTable) {
+fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
+    // Rebuild the symbol table with an empty prefix so that stored paths are
+    // bare ("types.md", "functions/foo.md", …).  The unified_symbols passed in
+    // were constructed with output_prefix = module_name (e.g. "SDEP"), which
+    // would cause relative_path to produce "../SDEP/types.md" from a property
+    // file instead of the correct "../types.md".
+    let symbols = SymbolTable::build_for_module_with_prefix(&module.items, "");
+    let symbols = &symbols;
+
     if cli.emit_json {
         let output_path = if cli.output == *"./output" {
             None
@@ -275,6 +576,13 @@ fn run_single_module(cli: Cli, module: &ModuleBundle, symbols: &SymbolTable) {
             eprintln!("error: {}: render failed: {e}", module.source_path.display());
             std::process::exit(2);
         });
+    handle_branding_assets(
+        &cli.output,
+        cli.logo.as_deref(),
+        cli.favicon.as_deref(),
+        cli.docfx,
+    );
+    handle_extra_docs(&cli.output, &cli.extra_docs, cli.docfx);
     eprintln!("wrote output to {}", cli.output.display());
 }
 
@@ -355,6 +663,14 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
         });
     }
 
+    handle_branding_assets(
+        &cli.output,
+        cli.logo.as_deref(),
+        cli.favicon.as_deref(),
+        cli.docfx,
+    );
+    handle_extra_docs(&cli.output, &cli.extra_docs, cli.docfx);
+
     eprintln!("wrote output to {}", cli.output.display());
 }
 
@@ -372,9 +688,14 @@ fn run_saw_log_adapter(log_path: &Path, output: &Path) {
         properties.insert(record.name.clone(), entry);
     }
 
+    // Preserve any existing `functions` entries so subsequent runs of
+    // --adapt-saw-results don't clobber Cryptol property results and
+    // vice versa.  Both adapters merge into the same manifest by name.
+    let existing_functions = load_existing_section(output, "functions");
+
     let manifest = serde_json::json!({
         "properties": properties,
-        "functions": {},
+        "functions": existing_functions,
     });
 
     if let Some(parent) = output.parent() {
@@ -402,19 +723,79 @@ fn run_saw_log_adapter(log_path: &Path, output: &Path) {
     );
 }
 
+/// Read an existing manifest at `path` and return the named top-level
+/// section (`properties` or `functions`) as a JSON object.  Used so the
+/// two adapters can merge into the same file: each preserves the other
+/// adapter's section instead of overwriting it.  Missing file or
+/// unparseable manifest yields an empty object (which is also the
+/// fresh-manifest case, so behavior is unchanged for first runs).
+fn load_existing_section(path: &Path, key: &str) -> serde_json::Value {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return serde_json::json!({}),
+    };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return serde_json::json!({}),
+    };
+    v.get(key)
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
 fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
     match status {
-        ProofStatus::Proven { solver, time_secs } => {
+        ProofStatus::Proven {
+            solver,
+            time_secs,
+            overrides,
+            iterations,
+            verify_command,
+            verify_script,
+        } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("proven"));
             m.insert("solver".into(), serde_json::json!(solver));
             if let Some(t) = time_secs {
                 m.insert("time_secs".into(), serde_json::json!(t));
             }
+            if !overrides.is_empty() {
+                m.insert("overrides".into(), serde_json::json!(overrides));
+            }
+            if let Some(n) = iterations {
+                m.insert("iterations".into(), serde_json::json!(n));
+            }
+            if let Some(cmd) = verify_command {
+                m.insert("verify_command".into(), serde_json::json!(cmd));
+            }
+            if let Some(scr) = verify_script {
+                m.insert("verify_script".into(), serde_json::json!(scr));
+            }
             serde_json::Value::Object(m)
         }
-        ProofStatus::Failed { reason } => {
-            serde_json::json!({ "status": "failed", "reason": reason })
+        ProofStatus::Failed {
+            reason,
+            counterexample,
+            log_excerpt,
+            verify_command,
+            verify_script,
+        } => {
+            let mut m = serde_json::Map::new();
+            m.insert("status".into(), serde_json::json!("failed"));
+            m.insert("reason".into(), serde_json::json!(reason));
+            if let Some(cx) = counterexample {
+                m.insert("counterexample".into(), serde_json::json!(cx));
+            }
+            if let Some(log) = log_excerpt {
+                m.insert("log_excerpt".into(), serde_json::json!(log));
+            }
+            if let Some(cmd) = verify_command {
+                m.insert("verify_command".into(), serde_json::json!(cmd));
+            }
+            if let Some(scr) = verify_script {
+                m.insert("verify_script".into(), serde_json::json!(scr));
+            }
+            serde_json::Value::Object(m)
         }
         ProofStatus::Assumed => serde_json::json!({ "status": "assumed" }),
         ProofStatus::NotAttempted => serde_json::json!({ "status": "not_attempted" }),
@@ -498,24 +879,127 @@ fn run_adapt_saw_results(dir: &Path, output: &Path) {
             .get("message")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        // Optional metadata: overridden function names and bounded-loop bound.
+        // saw-spec-gen emits these when a SAW spec uses overrides or runs at
+        // a bounded MAX_LEN; we round-trip both into the manifest so the
+        // rendered docs can show what the proof actually depended on.
+        let overrides: Vec<String> = value
+            .get("overrides")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let iterations: Option<u64> = value
+            .get("iterations")
+            .or_else(|| value.get("loop_bound"))
+            .or_else(|| value.get("max_len"))
+            .and_then(|v| v.as_u64());
+        // Failure diagnostics: a clean counterexample (when the solver
+        // returned one) and/or an excerpt of the SAW/Cryptol log. Either
+        // helps a reader of the rendered page see *why* the proof failed
+        // instead of just "error during verification".
+        //
+        // saw-spec-gen (schema v1) emits the counterexample as a structured
+        // array of `{name, value, bits}` records.  Pretty-specs has always
+        // exposed it as free-form text in the rendered fold, so when we see
+        // an array we format it as `name = value` lines here rather than
+        // pushing that formatting concern into the renderer.  A `counterexample_text`
+        // string field (saw-spec-gen schema v2+) wins when present so the
+        // upstream tool can override formatting if it wants to.
+        let counterexample: Option<String> = value
+            .get("counterexample_text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                value
+                    .get("counterexample")
+                    .or_else(|| value.get("witness"))
+                    .and_then(|v| match v {
+                        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+                        serde_json::Value::Array(arr) if !arr.is_empty() => {
+                            let lines: Vec<String> = arr
+                                .iter()
+                                .filter_map(|entry| {
+                                    let obj = entry.as_object()?;
+                                    let name = obj.get("name").and_then(|n| n.as_str())?;
+                                    let val = obj
+                                        .get("value")
+                                        .map(|x| match x {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            other => other.to_string(),
+                                        })
+                                        .unwrap_or_else(|| "<unknown>".into());
+                                    let bits = obj.get("bits").and_then(|b| b.as_u64());
+                                    Some(match bits {
+                                        Some(b) => format!("{name} = {val}  ({b}-bit)"),
+                                        None => format!("{name} = {val}"),
+                                    })
+                                })
+                                .collect();
+                            if lines.is_empty() {
+                                None
+                            } else {
+                                Some(lines.join("\n"))
+                            }
+                        }
+                        _ => None,
+                    })
+            });
+        let log_excerpt: Option<String> = value
+            .get("log_excerpt")
+            .or_else(|| value.get("log"))
+            .or_else(|| value.get("stderr"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        // Copy-pasteable shell command (and/or absolute path to the verify
+        // script) that re-runs this proof locally.  The renderer surfaces
+        // these in a "Verify this yourself" section so readers can poke at
+        // the proof without grepping the pipeline.
+        let verify_command: Option<String> = value
+            .get("verify_command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let verify_script: Option<String> = value
+            .get("verify_script")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let proof_status = match raw_status {
             "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => {
                 ProofStatus::Proven {
                     solver: solver.to_string(),
                     time_secs,
+                    overrides,
+                    iterations,
+                    verify_command: verify_command.clone(),
+                    verify_script: verify_script.clone(),
                 }
             }
             "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
                 ProofStatus::Failed {
                     reason: message.unwrap_or_else(|| "counterexample found".into()),
+                    counterexample,
+                    log_excerpt,
+                    verify_command: verify_command.clone(),
+                    verify_script: verify_script.clone(),
                 }
             }
             "timeout" => ProofStatus::Failed {
                 reason: message.unwrap_or_else(|| "timeout".into()),
+                counterexample,
+                log_excerpt,
+                verify_command: verify_command.clone(),
+                verify_script: verify_script.clone(),
             },
             "error" | "UNKNOWN" => ProofStatus::Failed {
                 reason: message.unwrap_or_else(|| "error during verification".into()),
+                counterexample,
+                log_excerpt,
+                verify_command: verify_command.clone(),
+                verify_script: verify_script.clone(),
             },
             _ => ProofStatus::NotAttempted,
         };
@@ -538,8 +1022,12 @@ fn run_adapt_saw_results(dir: &Path, output: &Path) {
     }
 
     let fn_count = functions_map.len();
+    // Preserve any existing `properties` section so a prior
+    // --adapt-saw-log run (Cryptol property verdicts) is not clobbered
+    // when this adapter writes function verdicts to the same manifest.
+    let existing_properties = load_existing_section(output, "properties");
     let manifest = serde_json::json!({
-        "properties": {},
+        "properties": existing_properties,
         "functions": functions_map,
     });
 

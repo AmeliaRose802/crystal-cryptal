@@ -50,16 +50,7 @@ pub fn parse(source: &str) -> Vec<Item> {
         let mod_doc_lines: Vec<String> = block_docs
             .iter()
             .filter(|d| first_decl_start.map_or(true, |fds| d.byte_pos < fds))
-            .flat_map(|d| {
-                d.content.lines().map(|l| {
-                    let t = l.trim();
-                    let t = t.strip_prefix("/**").unwrap_or(t);
-                    let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
-                    let t = t.strip_suffix("*/").unwrap_or(t);
-                    t.trim().to_string()
-                })
-            })
-            .filter(|l| !l.is_empty())
+            .flat_map(|d| clean_doc_lines(&d.content))
             .collect();
 
         items.push(Item::Module {
@@ -85,19 +76,7 @@ pub fn parse(source: &str) -> Vec<Item> {
         if inside_decl {
             continue;
         }
-        let lines: Vec<String> = doc
-            .content
-            .lines()
-            .map(|l| {
-                let t = l.trim();
-                // Strip block comment continuation markers
-                let t = t.strip_prefix("/**").unwrap_or(t);
-                let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
-                let t = t.strip_suffix("*/").unwrap_or(t);
-                t.trim().to_string()
-            })
-            .filter(|l| !l.is_empty())
-            .collect();
+        let lines = clean_doc_lines(&doc.content);
         if !lines.is_empty() {
             positioned.push((doc.byte_pos, Item::CommentBlock { lines }));
         }
@@ -112,22 +91,7 @@ pub fn parse(source: &str) -> Vec<Item> {
 
         let (doc_text, decl_text) = split_doc_and_decl(text);
         if let Some(doc) = doc_text {
-            let lines: Vec<String> = doc
-                .lines()
-                .map(|l| {
-                    let t = l.trim();
-                    // Strip line comment prefix
-                    let t = t.strip_prefix("///").or_else(|| t.strip_prefix("//")).unwrap_or(t);
-                    // Strip block comment markers
-                    let t = t.strip_prefix("/**").unwrap_or(t);
-                    let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
-                    let t = t.strip_suffix("*/").unwrap_or(t);
-                    t.trim().to_string()
-                })
-                .filter(|l| !l.is_empty())
-                .filter(|l| !is_separator_content(l))
-                .filter(|l| !is_section_number_line(l))
-                .collect();
+            let lines = clean_doc_lines(&doc);
             if !lines.is_empty() {
                 positioned.push((*start, Item::CommentBlock { lines }));
             }
@@ -219,18 +183,7 @@ fn parse_parameter_block(text: &str, items: &mut Vec<Item>) {
         // Extract doc comment if present
         let (doc_text, decl_text) = split_doc_and_decl(chunk);
         let doc: Vec<String> = doc_text
-            .map(|d| {
-                d.lines()
-                    .map(|l| {
-                        let t = l.trim();
-                        let t = t.strip_prefix("/**").unwrap_or(t);
-                        let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
-                        let t = t.strip_suffix("*/").unwrap_or(t);
-                        t.trim().to_string()
-                    })
-                    .filter(|l| !l.is_empty())
-                    .collect()
-            })
+            .map(|d| clean_doc_lines(&d))
             .unwrap_or_default();
 
         let decl_text = decl_text.trim();
@@ -450,22 +403,7 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
             }
             let (doc_text, decl_text) = split_doc_and_decl(chunk);
             if let Some(doc) = doc_text {
-                let lines: Vec<String> = doc
-                    .lines()
-                    .map(|l| {
-                        let t = l.trim();
-                        // Strip line comment prefix
-                        let t = t.strip_prefix("///").or_else(|| t.strip_prefix("//")).unwrap_or(t);
-                        // Strip block comment markers
-                        let t = t.strip_prefix("/**").unwrap_or(t);
-                        let t = t.strip_prefix("* ").or_else(|| t.strip_prefix('*')).unwrap_or(t);
-                        let t = t.strip_suffix("*/").unwrap_or(t);
-                        t.trim().to_string()
-                    })
-                    .filter(|l| !l.is_empty())
-                    .filter(|l| !is_separator_content(l))
-                    .filter(|l| !is_section_number_line(l))
-                    .collect();
+                let lines = clean_doc_lines(&doc);
                 if !lines.is_empty() {
                     items.push(Item::CommentBlock { lines });
                 }
@@ -719,6 +657,65 @@ fn split_property_name(name: &str) -> (String, String) {
     }
 }
 
+/// Strip Cryptol / C-style comment markers from a doc block, **preserving**
+/// blank lines (so paragraph breaks survive into the rendered Markdown) and
+/// **preserving indentation that follows the marker** (so byte-layout
+/// listings and code snippets keep their alignment).
+///
+/// Leading and trailing blank lines are trimmed; interior blank lines are
+/// kept verbatim. Lines whose only content was a section heading (`4.6 foo`)
+/// or a separator (`---------`) are dropped.
+pub(crate) fn clean_doc_lines(doc: &str) -> Vec<String> {
+    let mut out: Vec<String> = doc
+        .lines()
+        .filter_map(|line| {
+            // Find leading whitespace and the comment marker.
+            let trimmed_start = line.trim_start();
+            let (after, had_marker) = if let Some(rest) = trimmed_start.strip_prefix("///") {
+                (rest, true)
+            } else if let Some(rest) = trimmed_start.strip_prefix("//") {
+                (rest, true)
+            } else if let Some(rest) = trimmed_start.strip_prefix("/**") {
+                (rest, true)
+            } else if let Some(rest) = trimmed_start.strip_prefix("*/") {
+                (rest, true)
+            } else if let Some(rest) = trimmed_start.strip_prefix('*') {
+                (rest, true)
+            } else if trimmed_start.is_empty() {
+                ("", true) // blank source line — paragraph break
+            } else {
+                (trimmed_start, false)
+            };
+            let after = after.strip_suffix("*/").unwrap_or(after);
+            // Strip exactly one space after the marker (idiomatic `// foo`),
+            // so any *further* indentation (`//   byte 0 ...`) survives.
+            let cleaned = if had_marker {
+                after.strip_prefix(' ').unwrap_or(after)
+            } else {
+                after
+            };
+            let cleaned = cleaned.trim_end().to_string();
+            // Drop separator-only and pure section-number lines so they don't
+            // pollute the rendered prose.
+            if !cleaned.trim().is_empty()
+                && (is_separator_content(&cleaned) || is_section_number_line(&cleaned))
+            {
+                return None;
+            }
+            Some(cleaned)
+        })
+        .collect();
+
+    // Trim leading and trailing blank lines.
+    while out.first().is_some_and(|l| l.trim().is_empty()) {
+        out.remove(0);
+    }
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out
+}
+
 fn split_doc_and_decl(text: &str) -> (Option<String>, &str) {
     let mut doc_end = 0;
     for line in text.lines() {
@@ -941,7 +938,43 @@ fn group_enums(items: &mut Vec<Item>) {
                         j += 1;
                     }
                     Item::CommentBlock { .. } => {
-                        j += 1;
+                        // Only consume comment blocks that belong to *this*
+                        // enum group (i.e., that sit between this type's
+                        // constructors). If the next non-comment item is a
+                        // different type declaration, the comment is that
+                        // type's doc and must be left in place.
+                        let mut k = j + 1;
+                        while k < items.len() {
+                            if let Item::CommentBlock { .. } = &items[k] {
+                                k += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let belongs_to_this_enum = matches!(
+                            items.get(k),
+                            Some(Item::Function {
+                                name: fn_name,
+                                signature: fn_sig,
+                                body: fn_body,
+                                ..
+                            }) if (fn_sig.trim() == type_name
+                                || body_has_type_annotation(fn_body, &type_name))
+                                && !fn_body.is_empty()
+                                && fn_name
+                                    .chars()
+                                    .next()
+                                    .is_some_and(|c| c.is_uppercase())
+                        ) || matches!(
+                            items.get(k),
+                            Some(Item::Function { name: fn_name, .. })
+                                if *fn_name == format!("is{}", type_name)
+                        );
+                        if belongs_to_this_enum {
+                            j += 1;
+                        } else {
+                            break;
+                        }
                     }
                     _ => break,
                 }

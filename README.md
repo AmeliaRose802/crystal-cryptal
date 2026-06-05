@@ -43,6 +43,10 @@ pretty-specs SDEP.cry --title "My Protocol" --no-details -o docs/
 | `--no-details` | Omit function bodies and property explanations |
 | `--proof-status <FILE>` | Path to a proof-status JSON manifest |
 | `--title <TITLE>` | Document title (overrides the module name) |
+| `--docfx` | Emit DocFX-compatible front-matter and `toc.yml` files |
+| `--logo <PATH>` | Copy a logo image into `<output>/images/` (prints `_appLogoPath` snippet under `--docfx`) |
+| `--favicon <PATH>` | Copy a favicon into `<output>/images/` (prints `_appFaviconPath` snippet under `--docfx`) |
+| `--extra-docs <DIR[:NAME]>` | Include an extra directory of Markdown verbatim (see [Extra Docs](#extra-docs)). Repeatable. |
 
 ### Exit codes
 
@@ -89,6 +93,34 @@ Use `--proof-status <FILE>` to annotate properties with verification results. Th
 ```
 
 Supported statuses: `proven`, `assumed`, `failed`, `not_attempted`. Properties not listed in the manifest are rendered without a status badge.
+
+## Extra Docs
+
+Use `--extra-docs <DIR>` to ship additional hand-written Markdown pages
+alongside the auto-generated spec docs. Each directory is copied verbatim
+to `<output>/<basename>/`, preserving subdirectory structure. The flag is
+repeatable.
+
+```bash
+# Drop docs/extra_guides/*.md into <output>/extra_guides/ and link from toc
+pretty-specs SDEP.cry -o docs/ --docfx --extra-docs docs_src/extra_guides
+
+# Multiple dirs + a custom toc label
+pretty-specs SDEP.cry -o docs/ --docfx \
+  --extra-docs docs_src/guides \
+  --extra-docs "docs_src/tutorials:Tutorials"
+```
+
+Under `--docfx`, an entry is appended to the top-level `toc.yml`:
+
+- If the directory contains a `toc.yml`, that file is used as the toc target.
+- Otherwise an `index.md` at the root is used.
+- If neither exists the files are still copied (so DocFX's content glob picks
+  them up) but no navbar entry is added.
+
+The display name comes from the optional `:NAME` suffix; otherwise the
+basename is title-cased (`extra_guides` → `Extra Guides`). Hidden entries
+(names starting with `.`) and symlinks are skipped.
 
 ## Development Setup
 

@@ -59,6 +59,26 @@
     Additional flags forwarded verbatim to every clang invocation (C++ only).
     Maps to verify.ps1's -ClangFlags. Example: -ExtraClangFlags '-fexceptions','-fno-inline'.
 
+.PARAMETER Logo
+    Path to a logo image (svg/png) to copy into <Output>/images/ during
+    Step 0 and Step 4. When combined with -Docfx, pretty-specs prints the
+    matching `_appLogoPath` globalMetadata snippet to stderr. Source path
+    should live OUTSIDE the -Output directory so it survives doc regen.
+
+.PARAMETER Favicon
+    Path to a favicon (.ico/.png/.svg) to copy into <Output>/images/ during
+    Step 0 and Step 4. When combined with -Docfx, pretty-specs prints the
+    matching `_appFaviconPath` globalMetadata snippet to stderr.
+
+.PARAMETER ExtraDocs
+    One or more directories of additional Markdown (and supporting) files
+    to include verbatim in the generated site. Each directory is copied to
+    <Output>/<basename>/ preserving structure during Step 0 and Step 4.
+    In -Docfx mode an entry is appended to the top-level toc.yml so the
+    pages appear in the navbar (prefers a toc.yml at the dir root, falling
+    back to index.md). Items may use the optional DIR:Display Name syntax
+    to override the toc label. Example: -ExtraDocs docs_extra,guides:Guides.
+
 .PARAMETER SkipVerify
     Skip saw-spec-gen verification (Steps 1–2). Still adapts existing results
     if VerifyOutput already contains result.json files.
@@ -99,13 +119,32 @@ param(
     [string[]]$CxxIncludeDirs = @(),
     [string]$CxxStandard = "",
     [string[]]$ExtraClangFlags = @(),
+    [string]$Logo = "",
+    [string]$Favicon = "",
+    [string[]]$ExtraDocs = @(),
     [switch]$SkipVerify,
     [switch]$SkipAdapt,
-    [switch]$SkipDocs
+    [switch]$SkipDocs,
+    [switch]$Docfx,
+    # Soft-exit on Cryptol-only helpers (no matching impl symbol)
+    # instead of erroring out. Default: on, because pretty-specs
+    # naturally generates one job per top-level Cryptol def and most
+    # spec modules contain private helpers (packPad, derivePin, etc.)
+    # with no implementation analog. Use -SpecOnlyOnMissing:$false to
+    # restore the old strict-error behaviour.
+    [switch]$SpecOnlyOnMissing = $true
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Auto-enable -Docfx when a docfx.json sits in the current working directory
+# (typical for repos that host a DocFX site). Without --docfx, pretty-specs
+# does not emit toc.yml, which breaks the DocFX navbar.
+if (-not $Docfx -and (Test-Path (Join-Path (Get-Location) 'docfx.json'))) {
+    Write-Host "[pipeline] docfx.json detected — enabling -Docfx automatically." -ForegroundColor DarkGray
+    $Docfx = $true
+}
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
@@ -128,7 +167,12 @@ function Invoke-PrettySpecs {
 # ── Step 0: Initial doc render (without proof status) ────────────────────────
 
 Write-Host "`n[Step 0] Initial doc render" -ForegroundColor Cyan
-Invoke-PrettySpecs @($Spec, "-o", $Output)
+$step0Args = @($Spec, "-o", $Output)
+if ($Docfx) { $step0Args += "--docfx" }
+if ($Logo    -ne "") { $step0Args += @("--logo",    $Logo) }
+if ($Favicon -ne "") { $step0Args += @("--favicon", $Favicon) }
+foreach ($d in $ExtraDocs) { if ($d -ne "") { $step0Args += @("--extra-docs", $d) } }
+Invoke-PrettySpecs $step0Args
 
 # ── Step 1: Emit function list ────────────────────────────────────────────────
 
@@ -207,6 +251,7 @@ if (-not $SkipVerify -and $Impl -ne "") {
                 if ($CxxStandard -ne "")           { $verifyArgs.CxxStandard = $CxxStandard }
                 if ($ExtraClangFlags.Count -gt 0)  { $verifyArgs.ClangFlags  = $ExtraClangFlags }
             }
+            if ($SpecOnlyOnMissing) { $verifyArgs.SpecOnlyOnMissing = $true }
 
             & $verifyScript @verifyArgs
             if ($LASTEXITCODE -eq 0) {
@@ -257,7 +302,12 @@ if (-not $SkipAdapt) {
 if (-not $SkipDocs) {
     if (Test-Path $ManifestOutput) {
         Write-Host "`n[Step 4] Rendering docs with proof badges -> $Output" -ForegroundColor Cyan
-        Invoke-PrettySpecs @($Spec, "--proof-status", $ManifestOutput, "-o", $Output)
+        $step4Args = @($Spec, "--proof-status", $ManifestOutput, "-o", $Output)
+        if ($Docfx) { $step4Args += "--docfx" }
+        if ($Logo    -ne "") { $step4Args += @("--logo",    $Logo) }
+        if ($Favicon -ne "") { $step4Args += @("--favicon", $Favicon) }
+        foreach ($d in $ExtraDocs) { if ($d -ne "") { $step4Args += @("--extra-docs", $d) } }
+        Invoke-PrettySpecs $step4Args
     } else {
         Write-Host "`n[Step 4] No proof manifest found at $ManifestOutput — docs already rendered in Step 0" -ForegroundColor DarkGray
     }

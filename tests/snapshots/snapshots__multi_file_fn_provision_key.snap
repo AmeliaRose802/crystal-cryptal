@@ -21,15 +21,18 @@ expression: content
 
 </details>
 
-Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `[ProvisionResult](../types.md#provisionresult)`. Defaults to `[PR_Succeeded](../types.md#provisionresult)` when no prior condition matches.
+### Formal definition (Cryptol)
 
-| # | Condition | Result |
-|---|-----------|--------|
-| 1 | ~ fleetEnabled | [PR_Disabled](../types.md#provisionresult) |
-| 2 | ~ validRequest | [PR_BadRequest](../types.md#provisionresult) |
-| 3 | vaultResult != [KV_Ok](../types.md#keyvaultresult) | [PR_InternalError](../types.md#provisionresult) |
-| 4 | keyIsActive | [PR_Unauthorized](../types.md#provisionresult) |
-| 5 | *(otherwise)* | [PR_Succeeded](../types.md#provisionresult) |
+```haskell
+provisionKey fleetEnabled validRequest vaultResult keyIsActive =
+  if ~ fleetEnabled        then PR_Disabled
+   | ~ validRequest        then PR_BadRequest
+   | vaultResult != KV_Ok  then PR_InternalError
+   | keyIsActive           then PR_Unauthorized
+  else                          PR_Succeeded
+```
+
+Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `ProvisionResult`. Defaults to `PR_Succeeded` when no prior condition matches.
 
 ```mermaid
 flowchart TD
@@ -52,16 +55,3 @@ flowchart TD
 - [P5 — Disabled Rejects All](../properties/key-lifecycle-safety.md#p5--disabled-rejects-all)
 - [P15 — Can Provision When Ready](../properties/protocol-liveness.md#p15--can-provision-when-ready)
 - [P20 — Bad Request Distinct](../properties/error-handling.md#p20--bad-request-distinct)
-
-<details><summary>Formal definition (Cryptol)</summary>
-
-```cryptol
-provisionKey fleetEnabled validRequest vaultResult keyIsActive =
-  if ~ fleetEnabled        then PR_Disabled
-   | ~ validRequest        then PR_BadRequest
-   | vaultResult != KV_Ok  then PR_InternalError
-   | keyIsActive           then PR_Unauthorized
-  else                          PR_Succeeded
-```
-
-</details>

@@ -93,14 +93,14 @@ A 2-bit enumeration with 3 variants.
 Used by: [`enforceAccess`](functions/enforceAccess.md)
 
 ### UUID
-`128`
+**Type:** `[128]` — `128`-bit value
 
-2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.
+Well-formedness predicates for enum bit-vectors. 2.2 Structures used by getStatus.
 
 Used by: [`getStatus`](functions/getStatus.md)
 
 ### OptUUID
-`(Bit, UUID)`
+**Type:** `[(Bit, UUID)]` — `(Bit, UUID)`-bit value
 
 Option<UUID> is encoded as a (present?, value) pair.
 
@@ -108,65 +108,69 @@ Option<UUID> is encoded as a (present?, value) pair.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `fleetMode` | FleetMode | |
-| `hasKey` | Bit | |
-| `keyId` | OptUUID | |
-| `isActive` | Bit | |
+| `fleetMode` | FleetMode | `FleetMode` value |
+| `hasKey` | Bit | Boolean flag |
+| `keyId` | OptUUID | `OptUUID` value |
+| `isActive` | Bit | Boolean flag |
 
 Used by: [`getStatus`](functions/getStatus.md)
 
 ### Timestamp
-`64`
+**Type:** `[64]` — `64`-bit value
 
 true iff requestTimestamp <= currentTime && currentTime - requestTimestamp <= windowSeconds Timestamps and windows are unbounded naturals in spec; we use 64-bit.
 
 Used by: [`isValidRequestDate`](functions/isValidRequestDate.md), [`verifierTimestamp_current`](functions/verifierTimestamp_current.md)
 
 ### Window
-`64`
+**Type:** `[64]` — `64`-bit value
+
 
 Used by: [`isValidRequestDate`](functions/isValidRequestDate.md)
 
 ### HmacKey
-`256`
+**Type:** `[256]` — `256`-bit value
 
 4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC. The Cryptol-level model treats HMAC-SHA256 as an opaque function from (key, payload) to a 256-bit tag, and constantTimeEquals as `==`.
 
 Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
 
 ### HmacTag
-`256`
+**Type:** `[256]` — `256`-bit value
+
 
 Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
 
 ### Request
-`256`
+**Type:** `[256]` — `256`-bit value
+
 
 Used by: [`hmacSha256`](functions/hmacSha256.md), [`isValidSignature`](functions/isValidSignature.md)
 
 ### FL
-`16`
+**Type:** `[16]` — `16`-bit value
 
 The encoder now prepends each variable-length field with its byte length (a fixed-width unsigned length tag). A parser reads exactly the declared number of bytes for each field, so no byte inside any field can be mistaken for a boundary.
 
 Used by: [`canonNormalized`](functions/canonNormalized.md), [`canonLenPrefixed`](functions/canonLenPrefixed.md)
 
 ### IW
-`8`
+**Type:** `[8]` — `8`-bit value
 
 Index/length width: one byte is more than enough for FL <= 127.
 
 Used by: [`canonNormalized`](functions/canonNormalized.md), [`canonLenPrefixed`](functions/canonLenPrefixed.md)
 
 ### FLs
-`2`
+**Type:** `[2]` — `2`-bit value
 
 The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but blocks any property that needs to look INSIDE the request. Bounded sizes for BMC: 2-byte fields, 2 headers per request.
 
 Used by: [`lpField`](functions/lpField.md), [`lpHeader`](functions/lpHeader.md), [`canonicalizeS`](functions/canonicalizeS.md)
 
 ### Ns
-`2`
+**Type:** `[2]` — `2`-bit value
+
 
 Used by: [`canonicalizeS`](functions/canonicalizeS.md)
 
@@ -176,8 +180,8 @@ A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `len` | [IW] | |
-| `buf` | [FLs][8] | |
+| `len` | [IW] | `IW`-bit value |
+| `buf` | [FLs][8] | Buffer of `FLs` bytes |
 
 Used by: [`fieldNormalized`](functions/fieldNormalized.md), [`lpField`](functions/lpField.md)
 
@@ -187,9 +191,9 @@ One header is a (name, value) pair plus a flag marking it as the auth header (x-
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | Field | |
-| `value` | Field | |
-| `isAuth` | Bit | |
+| `name` | Field | `Field` value |
+| `value` | Field | `Field` value |
+| `isAuth` | Bit | Boolean flag |
 
 Used by: [`lpHeader`](functions/lpHeader.md)
 
@@ -197,10 +201,10 @@ Used by: [`lpHeader`](functions/lpHeader.md)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `method` | Field | |
-| `path` | Field | |
-| `body` | Field | |
-| `timestamp` | Timestamp | |
-| `hdrs` | [Ns]Header | |
+| `method` | Field | `Field` value |
+| `path` | Field | `Field` value |
+| `body` | Field | `Field` value |
+| `timestamp` | Timestamp | `Timestamp` value |
+| `hdrs` | [Ns]Header | Array of `Ns` `Header` values |
 
 Used by: [`requestNormalized`](functions/requestNormalized.md), [`canonicalizeS`](functions/canonicalizeS.md), [`verifierTimestamp_current`](functions/verifierTimestamp_current.md)

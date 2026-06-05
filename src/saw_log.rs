@@ -82,11 +82,19 @@ pub fn try_parse_verdict(line: &str) -> Option<ProofStatus> {
         Some(ProofStatus::Proven {
             solver: "saw".to_string(),
             time_secs: None,
+            overrides: Vec::new(),
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
         })
     } else if trimmed == "Valid" || trimmed == "Valid." {
         Some(ProofStatus::Proven {
             solver: "saw".to_string(),
             time_secs: None,
+            overrides: Vec::new(),
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
         })
     } else if trimmed.starts_with("Counterexample")
         || trimmed.starts_with("Invalid")
@@ -94,6 +102,10 @@ pub fn try_parse_verdict(line: &str) -> Option<ProofStatus> {
     {
         Some(ProofStatus::Failed {
             reason: "counterexample found".to_string(),
+            counterexample: None,
+            log_excerpt: None,
+            verify_command: None,
+            verify_script: None,
         })
     } else {
         None
@@ -186,11 +198,19 @@ mod tests {
         ProofStatus::Proven {
             solver: "saw".to_string(),
             time_secs: None,
+            overrides: Vec::new(),
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
         }
     }
     fn failed() -> ProofStatus {
         ProofStatus::Failed {
             reason: "counterexample found".to_string(),
+            counterexample: None,
+            log_excerpt: None,
+            verify_command: None,
+            verify_script: None,
         }
     }
 

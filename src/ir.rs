@@ -10,10 +10,47 @@ pub enum ProofStatus {
     Proven {
         solver: String,
         time_secs: Option<f64>,
+        /// Functions whose specs were used as `*_unsafe_assume_spec` /
+        /// `llvm_verify` overrides while discharging this proof. Each entry
+        /// records a dependency of the verdict — the property/function is
+        /// only as trustworthy as those overrides.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        overrides: Vec<String>,
+        /// For bounded-loop proofs: the loop-unroll bound (or `MAX_LEN`) that
+        /// the proof was discharged at. `None` for proofs that don't involve
+        /// a bounded loop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iterations: Option<u64>,
+        /// Copy-pasteable shell command that reproduces this proof from a
+        /// clean checkout. Surfaced on the rendered page so readers can
+        /// re-run the verification locally without grepping the pipeline.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_command: Option<String>,
+        /// Path (relative to the manifest) of the generated SAW script that
+        /// drives this proof. Used as a fallback when `verify_command` is
+        /// absent — the page can synthesise `saw <path>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_script: Option<String>,
     },
     Assumed,
     Failed {
         reason: String,
+        /// Concrete counterexample emitted by the solver, when available
+        /// (e.g. "x = 0, y = 1"). Rendered as a code block on the per-item
+        /// page so readers can see the exact witness that broke the claim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        counterexample: Option<String>,
+        /// Excerpt of the verifier log / stderr surrounding the failure —
+        /// useful when SAW errors out with a stack trace rather than a clean
+        /// counterexample (e.g. memory-model failures, type mismatches).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log_excerpt: Option<String>,
+        /// Same as `ProofStatus::Proven::verify_command` — lets readers
+        /// re-run a failing proof locally to inspect it interactively.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_script: Option<String>,
     },
     NotAttempted,
 }
@@ -110,10 +147,26 @@ enum ManifestEntry {
     Proven {
         solver: String,
         time_secs: Option<f64>,
+        #[serde(default)]
+        overrides: Vec<String>,
+        #[serde(default)]
+        iterations: Option<u64>,
+        #[serde(default)]
+        verify_command: Option<String>,
+        #[serde(default)]
+        verify_script: Option<String>,
     },
     Assumed,
     Failed {
         reason: String,
+        #[serde(default)]
+        counterexample: Option<String>,
+        #[serde(default)]
+        log_excerpt: Option<String>,
+        #[serde(default)]
+        verify_command: Option<String>,
+        #[serde(default)]
+        verify_script: Option<String>,
     },
     NotAttempted,
 }
@@ -121,11 +174,35 @@ enum ManifestEntry {
 impl From<ManifestEntry> for ProofStatus {
     fn from(entry: ManifestEntry) -> Self {
         match entry {
-            ManifestEntry::Proven { solver, time_secs } => {
-                ProofStatus::Proven { solver, time_secs }
-            }
+            ManifestEntry::Proven {
+                solver,
+                time_secs,
+                overrides,
+                iterations,
+                verify_command,
+                verify_script,
+            } => ProofStatus::Proven {
+                solver,
+                time_secs,
+                overrides,
+                iterations,
+                verify_command,
+                verify_script,
+            },
             ManifestEntry::Assumed => ProofStatus::Assumed,
-            ManifestEntry::Failed { reason } => ProofStatus::Failed { reason },
+            ManifestEntry::Failed {
+                reason,
+                counterexample,
+                log_excerpt,
+                verify_command,
+                verify_script,
+            } => ProofStatus::Failed {
+                reason,
+                counterexample,
+                log_excerpt,
+                verify_command,
+                verify_script,
+            },
             ManifestEntry::NotAttempted => ProofStatus::NotAttempted,
         }
     }
@@ -270,6 +347,10 @@ mod tests {
                 proof_status: Some(ProofStatus::Proven {
                     solver: "z3".into(),
                     time_secs: Some(0.42),
+                    overrides: vec![],
+                    iterations: None,
+                    verify_command: None,
+                    verify_script: None,
                 }),
                 is_private: false,
             },
@@ -313,7 +394,7 @@ mod tests {
         ));
         assert!(matches!(
             map.get("P99").unwrap(),
-            ProofStatus::Failed { reason } if reason == "counterexample found"
+            ProofStatus::Failed { reason, .. } if reason == "counterexample found"
         ));
     }
 
@@ -352,7 +433,7 @@ mod tests {
         ));
         assert!(matches!(
             manifest.functions.get("getStatus").unwrap(),
-            ProofStatus::Failed { reason } if reason == "counterexample found"
+            ProofStatus::Failed { reason, .. } if reason == "counterexample found"
         ));
     }
 

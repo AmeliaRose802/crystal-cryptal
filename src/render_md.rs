@@ -1,6 +1,7 @@
 // Markdown renderer: emits .md files from linked IR.
 
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io;
@@ -10,7 +11,7 @@ use convert_case::{Case, Casing};
 
 use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::{Branch, Item, ProofStatus};
-use crate::linker::{function_call_graph, sanitize_slug, SymbolTable};
+use crate::linker::{sanitize_slug, SymbolTable};
 
 const TYPE_DOC_INTERNAL_MARKERS: &[&str] = &[
     "counterexample",
@@ -61,8 +62,21 @@ pub fn render_multi_file_with_prefix(
     options: &RenderOptions,
     path_prefix: &str,
 ) -> io::Result<()> {
-    fs::create_dir_all(output_dir.join("functions"))?;
-    fs::create_dir_all(output_dir.join("properties"))?;
+    fs::create_dir_all(output_dir)?;
+
+    let has_types = items.iter().any(|i| {
+        matches!(i, Item::TypeAlias { .. } | Item::EnumGroup { .. } | Item::RecordType { .. })
+    });
+
+    let has_functions = items.iter().any(|i| match i {
+        Item::Function { name, signature, branches, body, .. } => {
+            (signature.contains("->") || !branches.is_empty())
+                && !is_simple_constructor(name, signature, branches, body)
+        }
+        _ => false,
+    });
+
+    let has_properties = items.iter().any(|i| matches!(i, Item::Property { .. }));
 
     let module_name = items
         .iter()
@@ -76,18 +90,26 @@ pub fn render_multi_file_with_prefix(
     }
     fs::write(output_dir.join("index.md"), index)?;
 
-    let types = render_types(items, symbols, path_prefix);
-    fs::write(output_dir.join("types.md"), types)?;
-
-    let mut functions_index = render_functions_index(items, symbols, options, path_prefix);
-    if options.docfx {
-        let fn_uid = format!("{module_name}.functions");
-        functions_index = format!("{}{}", docfx_frontmatter(&fn_uid, "Functions"), functions_index);
+    if has_types {
+        let types = render_types(items, symbols, path_prefix);
+        fs::write(output_dir.join("types.md"), types)?;
     }
-    fs::write(output_dir.join("functions/index.md"), functions_index)?;
 
-    render_function_files(items, symbols, output_dir, options, path_prefix)?;
-    render_property_files(items, symbols, output_dir, options, path_prefix)?;
+    if has_functions {
+        fs::create_dir_all(output_dir.join("functions"))?;
+        let mut functions_index = render_functions_index(items, symbols, options, path_prefix);
+        if options.docfx {
+            let fn_uid = format!("{module_name}.functions");
+            functions_index = format!("{}{}", docfx_frontmatter(&fn_uid, "Functions"), functions_index);
+        }
+        fs::write(output_dir.join("functions/index.md"), functions_index)?;
+        render_function_files(items, symbols, output_dir, options, path_prefix)?;
+    }
+
+    if has_properties {
+        fs::create_dir_all(output_dir.join("properties"))?;
+        render_property_files(items, symbols, output_dir, options, path_prefix)?;
+    }
 
     if options.docfx {
         let toc = render_docfx_toc(&title, items);
@@ -142,10 +164,9 @@ pub fn render_single_file(
             match item {
                 Item::TypeAlias { name, width, doc } => {
                     let _ = writeln!(out, "### {name}");
-                    let clean_width = clean_type_width(width);
-                    let _ = writeln!(out, "`{clean_width}`");
+                    render_type_alias_width(&mut out, width);
                     if let Some(clean_doc) = sanitize_type_doc(doc) {
-                        let _ = writeln!(out, "\n{clean_doc}");
+                        let _ = writeln!(out, "{clean_doc}");
                     }
                     out.push('\n');
                 }
@@ -180,7 +201,11 @@ pub fn render_single_file(
                     let _ = writeln!(out, "|-------|------|-------------|");
                     for (fname, ftype) in fields {
                         let linked_type = symbols.resolve_links_single_file(ftype);
-                        let _ = writeln!(out, "| `{fname}` | {linked_type} | |");
+                        let desc = describe_type(ftype);
+                        let _ = writeln!(
+                            out,
+                            "| `{fname}` | {linked_type} | {desc} |"
+                        );
                     }
                     out.push('\n');
                 }
@@ -235,33 +260,36 @@ pub fn render_single_file(
                     |ty| symbols.resolve_links_single_file(ty),
                 );
 
+                // Proof-details callout (overrides + bounded-loop iterations)
+                if let Some(callout) = render_proof_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
+                // Failure callout (reason + counterexample/log fold).
+                if let Some(detail) = proof_detail_line(proof_status) {
+                    let _ = writeln!(out, "> {detail}\n");
+                }
+                if let Some(callout) = render_failure_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
+                // "Verify this yourself" rerun command from the manifest.
+                if let Some(section) = render_verify_command_section(proof_status) {
+                    out.push_str(&section);
+                }
+
                 let effective_doc = if doc.is_empty() {
                     auto_describe_function(name, signature, branches, body)
                 } else {
                     doc.clone()
                 };
                 if !effective_doc.is_empty() {
-                    for line in &effective_doc {
-                        let linked = symbols.resolve_links_single_file(line);
-                        let _ = writeln!(out, "{linked}");
-                    }
-                    out.push('\n');
+                    render_doc_body(&mut out, &effective_doc, |l| {
+                        symbols.resolve_links_single_file(l)
+                    });
                 }
 
                 if branches.len() > 1 {
-                    let _ = writeln!(out, "| # | Condition | Result |");
-                    let _ = writeln!(out, "|---|-----------|--------|");
-                    for (i, branch) in branches.iter().enumerate() {
-                        let cond = match &branch.condition {
-                            Some(c) => symbols.resolve_links_single_file(c),
-                            None => "*(otherwise)*".into(),
-                        };
-                        let result = symbols.resolve_links_single_file(&branch.result);
-                        let _ = writeln!(out, "| {} | {} | {} |", i + 1, cond, result);
-                    }
-                    out.push('\n');
-
-                    // Flowchart
+                    // Flowchart only — the prior decision table duplicated
+                    // the same information one scroll above the diagram.
                     if let Some(chart) = render_flowchart_mermaid(name, branches) {
                         out.push_str(&chart);
                         out.push('\n');
@@ -285,27 +313,11 @@ pub fn render_single_file(
                         out,
                         "<details><summary>Formal definition (Cryptol)</summary>\n"
                     );
-                    let _ = writeln!(out, "```cryptol\n{body}\n```\n");
+                    let _ = writeln!(out, "```haskell\n{body}\n```\n");
                     let _ = writeln!(out, "</details>\n");
                 }
             }
         }
-    }
-
-    // Call graph
-    if !functions.is_empty() {
-        let fn_names: Vec<String> = functions
-            .iter()
-            .filter_map(|item| {
-                if let Item::Function { name, .. } = item {
-                    Some(name.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let edges = function_call_graph(items, &fn_names);
-        out.push_str(&render_call_graph_mermaid(&edges, &fn_names, items));
     }
 
     // ── Properties by category ──────────────────────────────────────────
@@ -345,13 +357,37 @@ pub fn render_single_file(
             } = prop_item
             {
                 let display_name = camel_to_spaced(name);
-                let badge = proof_badge(proof_status);
-                let badge_str = if badge.is_empty() {
+                let intentional_cex = is_intentional_counterexample(doc);
+                let icon = if intentional_cex && proof_badge(proof_status).is_empty() {
+                    "✗".to_string()
+                } else {
+                    proof_badge(proof_status)
+                };
+                let icon_prefix = if icon.is_empty() {
                     String::new()
                 } else {
-                    format!("  {badge}")
+                    format!("{icon} ")
                 };
-                let _ = writeln!(out, "### {label} — {display_name}{badge_str}\n");
+                let _ = writeln!(out, "### {icon_prefix}{label} — {display_name}\n");
+
+                // Surface "intentionally disproven" status above any other
+                // verification callouts so it cannot be mistaken for a
+                // proven guarantee when skimming.
+                if intentional_cex {
+                    out.push_str(&intentional_counterexample_callout());
+                }
+
+                // Surface verification context (failure reason, "not yet verified", etc.)
+                // immediately below the heading rather than baking it into the title.
+                if let Some(detail) = proof_detail_line(proof_status) {
+                    let _ = writeln!(out, "> {detail}\n");
+                }
+                if let Some(callout) = render_failure_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
+                if let Some(section) = render_verify_command_section(proof_status) {
+                    out.push_str(&section);
+                }
 
                 if !doc.is_empty() {
                     let mut in_expected_verdict = false;
@@ -376,13 +412,37 @@ pub fn render_single_file(
                     let _ = writeln!(out, "{desc}\n");
                 }
 
+                // Proof-details callout (overrides + bounded-loop iterations)
+                if let Some(callout) = render_proof_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
+
                 if !options.no_details && !body.is_empty() {
                     let _ = writeln!(
                         out,
                         "<details><summary>Formal property (Cryptol)</summary>\n"
                     );
-                    let _ = writeln!(out, "```cryptol\n{body}\n```\n");
+                    let _ = writeln!(out, "```haskell\n{body}\n```\n");
                     let _ = writeln!(out, "</details>\n");
+                }
+
+                // Transitive implementation-equivalence callout.
+                //
+                // Suppressed for intentional counterexamples: a "✓
+                // Implementation equivalence proven" line next to a
+                // deliberately-false property reads as "this claim is
+                // safe", which is exactly the wrong takeaway. The
+                // counterexample callout above already states the right
+                // thing — the implementation refutes the claim too.
+                if !intentional_cex {
+                    let fn_status = function_status_map(items);
+                    let involved_fn_names =
+                        find_involved_function_names(body, doc, &fn_status);
+                    if let Some(callout) =
+                        render_implementation_equivalence_callout(&involved_fn_names, &fn_status)
+                    {
+                        out.push_str(&callout);
+                    }
                 }
             }
         }
@@ -447,6 +507,48 @@ fn render_index(
         out.push('\n');
     }
 
+    // Two-layer-trust explainer. Anchored on the home page so newcomers
+    // immediately see what proof verdicts in this site do (and do not)
+    // mean before they start clicking around. Kept short on purpose —
+    // each property page restates the same idea in context.
+    if items
+        .iter()
+        .any(|i| matches!(i, Item::Property { .. } | Item::Function { .. }))
+    {
+        let _ = writeln!(out, "## How verification works here\n");
+        let _ = writeln!(
+            out,
+            "This site reports **two independent layers of proof**, and a \
+             security claim about the production binary needs *both*:\n"
+        );
+        let _ = writeln!(
+            out,
+            "1. **Properties are proven against the design.** Each entry in \
+             [Security Properties](#security-properties) is a Cryptol \
+             `property` discharged by a solver (typically Z3) over the \
+             Cryptol model. A `✓` here says the *logic of the spec* is \
+             sound.\n"
+        );
+        let _ = writeln!(
+            out,
+            "2. **Functions are proven against the implementation.** Each \
+             entry in [Functions](functions/index.md) is a Cryptol shim \
+             paired with a SAW `llvm_verify` / `mir_verify` proof showing \
+             the C++/Rust implementation produces identical outputs on every \
+             input. A `✓` here says *the code matches the model*.\n"
+        );
+        let _ = writeln!(
+            out,
+            "A property's guarantee therefore only transfers to the compiled \
+             binary insofar as **every function it mentions** also carries a \
+             SAW equivalence proof. Each property page surfaces this \
+             transitive status as an *Implementation equivalence* callout: \
+             if any involved function is unproven, assumed, or failed, the \
+             callout calls that out explicitly so a green Cryptol verdict \
+             isn't read as an end-to-end certificate.\n"
+        );
+    }
+
     // Module parameters section
     let params: Vec<_> = items
         .iter()
@@ -503,40 +605,61 @@ fn render_index(
 
     if has_functions {
         let _ = writeln!(out, "## Functions\n");
-        let _ = writeln!(out, "All function definitions: [functions](functions/index.md)\n");
-
-        // Call graph on index page
-        let fn_names: Vec<String> = items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Function { name, signature, branches, body, .. } => {
-                    if !signature.contains("->") && branches.is_empty() {
-                        return None;
-                    }
-                    if is_simple_constructor(name, signature, branches, body) {
-                        return None;
-                    }
-                    Some(name.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        let edges = function_call_graph(items, &fn_names);
-        out.push_str(&render_call_graph_mermaid(&edges, &fn_names, items));
+        // Embed the function summary table directly on the home page so
+        // readers see the per-function SAW-equivalence status without an
+        // extra navigation hop.  The dedicated `functions/index.md` page
+        // still exists for TOC navigation and links back here.
+        let fns = collect_functions_for_index(items);
+        if !fns.is_empty() {
+            out.push_str(&render_functions_table(&fns, "functions/"));
+        }
+        let _ = writeln!(out, "Per-function detail pages: [functions](functions/index.md)\n");
     }
 
     // Properties by category
     let categories = collect_categories(items, symbols);
     if !categories.is_empty() {
+        // Build a label → (ProofStatus, body, doc) lookup so each category
+        // row can show an aggregate verification badge alongside the
+        // property range AND flag properties that rely on functions
+        // lacking a SAW equivalence proof.
+        let prop_info: std::collections::HashMap<&str, (&Option<ProofStatus>, &str, &[String])> =
+            items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Property { label, body, doc, proof_status, .. } => Some((
+                        label.as_str(),
+                        (proof_status, body.as_str(), doc.as_slice()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+        let fn_status = function_status_map(items);
+
+        let has_any_status = prop_info.values().any(|(s, _, _)| s.is_some());
+
         let _ = writeln!(out, "## Security Properties\n");
-        let _ = writeln!(out, "| Category | Properties |");
-        let _ = writeln!(out, "|----------|------------|");
+        if has_any_status {
+            let _ = writeln!(out, "| Category | Properties | Status |");
+            let _ = writeln!(out, "|----------|------------|--------|");
+        } else {
+            let _ = writeln!(out, "| Category | Properties |");
+            let _ = writeln!(out, "|----------|------------|");
+        }
         for (cat_title, cat_slug, labels) in &categories {
             let range = property_range(labels);
-            let _ = writeln!(
-                out,
-                "| [{cat_title}](properties/{cat_slug}.md) | {range} |"
-            );
+            if has_any_status {
+                let status_cell = render_category_status(labels, &prop_info, &fn_status);
+                let _ = writeln!(
+                    out,
+                    "| [{cat_title}](properties/{cat_slug}.md) | {range} | {status_cell} |"
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "| [{cat_title}](properties/{cat_slug}.md) | {range} |"
+                );
+            }
         }
         out.push('\n');
     }
@@ -593,7 +716,56 @@ fn render_functions_index(
     let mut out = String::new();
     let _ = writeln!(out, "# Functions\n");
 
-    let functions: Vec<_> = items
+    // Quick orientation: clarify what the proof badges next to each function
+    // mean, so readers don't confuse "function proven" (SAW equivalence
+    // against the implementation) with "property proven" (Cryptol logic-
+    // level argument).
+    let _ = writeln!(
+        out,
+        "> **What `✓` means here.** Each function below is a Cryptol *shim* \
+         that mirrors the production C++/Rust implementation at the bit \
+         level. A `✓` badge means SAW has discharged an `llvm_verify` / \
+         `mir_verify` proof showing the implementation and the Cryptol shim \
+         produce identical outputs on **all** inputs. A `✗` means the proof \
+         failed, errored, or has not yet been attempted. The security \
+         [Properties](../properties/) are proven against the shim, and \
+         transfer to the implementation only as far as these function-level \
+         equivalence proofs go — see each property page's *Implementation \
+         equivalence* callout.\n"
+    );
+
+    let functions = collect_functions_for_index(items);
+
+    if !functions.is_empty() {
+        // The full Function | Status | Description table now lives on the
+        // top-level [index.md](../index.md#functions) so the home page
+        // surfaces verification status at a glance.  This page keeps a
+        // lightweight bullet list as a navigation aid into the per-function
+        // detail pages without duplicating the home-page table.
+        let _ = writeln!(
+            out,
+            "See the [home page](../index.md#functions) for the full \
+             Function · Status · Description table.\n"
+        );
+        let _ = writeln!(out, "## All functions\n");
+        for (name, _description, _status) in &functions {
+            let _ = writeln!(out, "- [{name}]({name}.md)");
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Shared collector for the Functions summary table.
+///
+/// Both `functions/index.md` (when we still emit a table there) and the
+/// top-level `index.md` page need the same filtered, summarised list of
+/// functions. Centralising the logic here keeps the two views in sync so
+/// readers don't see different sets of functions depending on which entry
+/// point they used.
+fn collect_functions_for_index(items: &[Item]) -> Vec<(String, String, Option<ProofStatus>)> {
+    items
         .iter()
         .filter_map(|item| match item {
             Item::Function {
@@ -602,6 +774,7 @@ fn render_functions_index(
                 branches,
                 body,
                 doc,
+                proof_status,
                 ..
             } => {
                 if !signature.contains("->") && branches.is_empty() {
@@ -610,34 +783,82 @@ fn render_functions_index(
                 if is_simple_constructor(name, signature, branches, body) {
                     return None;
                 }
-                let effective_doc = if doc.is_empty() {
-                    auto_describe_function(name, signature, branches, body)
+                if is_constant_binding(name, signature, body, branches) {
+                    return None;
+                }
+                // Prefer the hand-written doc, but if its lead paragraph is
+                // just a section header (e.g. "C++ body:" followed by a code
+                // block), fall back to the auto-generated summary so the
+                // Description column never displays a dangling header label.
+                let from_doc = first_doc_line(doc);
+                let description = if is_useful_summary(&from_doc) {
+                    from_doc
                 } else {
-                    doc.clone()
+                    let synthetic = auto_describe_function(name, signature, branches, body);
+                    first_doc_line(&synthetic)
                 };
-                Some((name.clone(), effective_doc))
+                Some((name.clone(), description, proof_status.clone()))
             }
             _ => None,
         })
-        .collect();
+        .collect()
+}
 
-    if !functions.is_empty() {
-        let _ = writeln!(out, "| Function | Description |");
-        let _ = writeln!(out, "|----------|-------------|");
-        for (name, doc) in &functions {
-            let first_line = first_doc_line(doc);
-            let _ = writeln!(out, "| [{name}]({name}.md) | {first_line} |");
-        }
-        out.push('\n');
-
-        // Call graph
-        let fn_names: Vec<String> =
-            functions.iter().map(|(n, _)| n.clone()).collect();
-        let edges = function_call_graph(items, &fn_names);
-        out.push_str(&render_call_graph_mermaid(&edges, &fn_names, items));
+/// Render the Function | Status | Description table.
+///
+/// `link_prefix` is prepended to each function name so the same table can
+/// be embedded at different depths in the doc tree (empty string when the
+/// caller is already inside `functions/`, `"functions/"` when called from
+/// the top-level `index.md`).
+fn render_functions_table(
+    functions: &[(String, String, Option<ProofStatus>)],
+    link_prefix: &str,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "| Function | Status | Description |");
+    let _ = writeln!(out, "|----------|--------|-------------|");
+    for (name, description, status) in functions {
+        let cell = escape_md_cell(description);
+        let status_cell = proof_status_cell(status);
+        let _ = writeln!(
+            out,
+            "| [{name}]({link_prefix}{name}.md) | {status_cell} | {cell} |"
+        );
     }
-
+    out.push('\n');
     out
+}
+
+/// One-cell summary of a function's SAW-equivalence proof state for the
+/// Functions index table. Mirrors `proof_badge`. When the manifest has no
+/// entry for this function we render an em dash so the column reads
+/// uniformly rather than leaving a visually inconsistent blank gap next
+/// to populated rows — Cryptol-only helpers and predicates legitimately
+/// have no implementation to verify against, and `—` communicates that
+/// more clearly than an empty cell.
+fn proof_status_cell(status: &Option<ProofStatus>) -> String {
+    match status {
+        Some(ProofStatus::Proven { .. }) => "✓ proven".into(),
+        Some(ProofStatus::Assumed) => "~ assumed".into(),
+        Some(ProofStatus::Failed { .. }) => "✗ failed".into(),
+        Some(ProofStatus::NotAttempted) => "✗ not attempted".into(),
+        None => "—".into(),
+    }
+}
+
+/// Whether a candidate first-line summary is presentable in a table cell.
+/// Rejects empty strings and bare section headers (a short line ending in
+/// `:` like "C++ body:") that would otherwise leave the Description column
+/// looking truncated.
+fn is_useful_summary(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.ends_with(':') {
+        return false;
+    }
+    true
 }
 
 // ── types.md ────────────────────────────────────────────────────────────────
@@ -690,10 +911,9 @@ fn render_types(items: &[Item], symbols: &SymbolTable, path_prefix: &str) -> Str
         match item {
             Item::TypeAlias { name, width, doc } => {
                 let _ = writeln!(out, "### {name}");
-                let clean_width = clean_type_width(width);
-                let _ = writeln!(out, "`{clean_width}`");
+                render_type_alias_width(&mut out, width);
                 if let Some(clean_doc) = sanitize_type_doc(doc) {
-                    let _ = writeln!(out, "\n{clean_doc}");
+                    let _ = writeln!(out, "{clean_doc}");
                 }
                 out.push('\n');
                 if let Some(fns) = type_to_fns.get(name) {
@@ -743,7 +963,11 @@ fn render_types(items: &[Item], symbols: &SymbolTable, path_prefix: &str) -> Str
                 for (fname, ftype) in fields {
                     let current_file = prefixed_file(path_prefix, "types.md");
                     let linked_type = symbols.resolve_links(ftype, &current_file);
-                    let _ = writeln!(out, "| `{fname}` | {linked_type} | |");
+                    let desc = describe_type(ftype);
+                    let _ = writeln!(
+                        out,
+                        "| `{fname}` | {linked_type} | {desc} |"
+                    );
                 }
                 out.push('\n');
                 if let Some(fns) = type_to_fns.get(name) {
@@ -813,6 +1037,41 @@ fn render_function_files(
                 |ty| symbols.resolve_links(ty, &current_file),
             );
 
+            // Formal Cryptol definition — shown right after the signature so
+            // readers see the actual code before any prose. Rendered inline
+            // (not in a <details> fold) at the user's request. Heading is
+            // H3 so it sits *below* the page title (H1) and the implicit
+            // structured-signature section without competing for top-level
+            // attention in the right-rail outline.
+            if !body.is_empty() {
+                let _ = writeln!(out, "### Formal definition (Cryptol)\n");
+                let _ = writeln!(out, "```haskell\n{body}\n```\n");
+            }
+
+            // Proof-details callout (overrides + bounded-loop iterations)
+            // when the manifest carries that metadata.  Placed right after
+            // the Cryptol body so the trust caveats sit next to the code
+            // they apply to, before the doc/flowchart consumes attention.
+            if let Some(callout) = render_proof_details_callout(proof_status) {
+                out.push_str(&callout);
+            }
+            // For failed / not-yet-verified / assumed functions, surface the
+            // short reason directly under the signature and, when the
+            // manifest carries solver diagnostics, drop the counterexample
+            // and log excerpt into folds below it.
+            if let Some(detail) = proof_detail_line(proof_status) {
+                let _ = writeln!(out, "> {detail}\n");
+            }
+            if let Some(callout) = render_failure_details_callout(proof_status) {
+                out.push_str(&callout);
+            }
+            // "Verify this yourself" — copy-pasteable rerun command from
+            // the manifest.  Rendered immediately after the failure callout
+            // so a frustrated reader's eye lands on an actionable next step.
+            if let Some(section) = render_verify_command_section(proof_status) {
+                out.push_str(&section);
+            }
+
             // Doc comment (auto-generated when absent)
             let effective_doc = if doc.is_empty() {
                 auto_describe_function(name, signature, branches, body)
@@ -820,30 +1079,15 @@ fn render_function_files(
                 doc.clone()
             };
             if !effective_doc.is_empty() {
-                for line in &effective_doc {
-                    let linked = symbols.resolve_links(line, &current_file);
-                    let _ = writeln!(out, "{linked}");
-                }
-                out.push('\n');
+                render_doc_body(&mut out, &effective_doc, |l| {
+                    symbols.resolve_links(l, &current_file)
+                });
             }
 
-            // Branches (decision table + flowchart for multi-branch functions)
+            // Branches: render flowchart only. The decision table
+            // duplicated the same information one scroll above the
+            // diagram, so per UX feedback we keep just the chart.
             if branches.len() > 1 {
-                // Decision table
-                let _ = writeln!(out, "| # | Condition | Result |");
-                let _ = writeln!(out, "|---|-----------|--------|");
-                for (i, branch) in branches.iter().enumerate() {
-                    let cond = match &branch.condition {
-                        Some(c) => symbols.resolve_links(c, &current_file),
-                        None => "*(otherwise)*".into(),
-                    };
-                    let result =
-                        symbols.resolve_links(&branch.result, &current_file);
-                    let _ = writeln!(out, "| {} | {} | {} |", i + 1, cond, result);
-                }
-                out.push('\n');
-
-                // Flowchart
                 if let Some(chart) = render_flowchart_mermaid(name, branches) {
                     out.push_str(&chart);
                     out.push('\n');
@@ -865,12 +1109,8 @@ fn render_function_files(
                 out.push('\n');
             }
 
-            // Details fold with raw body
-            if !options.no_details && !body.is_empty() {
-                let _ = writeln!(out, "<details><summary>Formal definition (Cryptol)</summary>\n");
-                let _ = writeln!(out, "```cryptol\n{body}\n```\n");
-                let _ = writeln!(out, "</details>");
-            }
+            // (Formal Cryptol definition is rendered inline above, right
+            //  after the signature — no <details> fold.)
 
             let fn_path = output_dir.join("functions").join(format!("{name}.md"));
             fs::write(&fn_path, out).map_err(|e| {
@@ -930,6 +1170,48 @@ fn render_property_files(
 
         let _ = writeln!(out, "# {cat_title}\n");
 
+        // Detect "all properties on this page are intentional
+        // counterexamples" — happens for the "Intentional counterexamples"
+        // category (and any future page authored the same way). In that
+        // case the standard "✓ means proved" preamble would mislead,
+        // because every entry on the page is *deliberately* refuted.
+        let all_intentional_cex = !props.is_empty()
+            && props.iter().all(|item| {
+                matches!(item, Item::Property { doc, .. } if is_intentional_counterexample(doc))
+            });
+
+        if all_intentional_cex {
+            let _ = writeln!(
+                out,
+                "> **How to read this page.** Every property below is a \
+                 *deliberately false* claim about the protocol — a \
+                 tempting-but-wrong intuition that the Cryptol prover \
+                 refutes with a concrete counterexample. They are listed \
+                 here as `✗` so a reader can see, side-by-side with the \
+                 proven (`✓`) safety properties elsewhere, exactly which \
+                 intuitions the implementation does **not** uphold and \
+                 why. A `✗` on this page is the *intended* outcome — not \
+                 a regression.\n"
+            );
+        } else {
+            // Two-layer trust reminder. Each property's `✓` is a *Cryptol-level*
+            // verdict; for that verdict to apply to the production C++/Rust
+            // code, every function the property mentions must additionally have
+            // a SAW equivalence proof. The per-property *Implementation
+            // equivalence* callouts below summarise that transitive coverage.
+            let _ = writeln!(
+                out,
+                "> **How to read these verdicts.** A property's ✓ means a \
+                 solver discharged the logical claim against the **Cryptol \
+                 model**. That guarantee carries over to the compiled \
+                 implementation only when every function the property mentions \
+                 *also* has a SAW equivalence proof — surfaced below each \
+                 property as an **Implementation equivalence** callout. A \
+                 green property over a partly-proven function set still tells \
+                 you the design is sound; it does **not** by itself certify the \
+                 binary.\n"
+            );
+        }
         for prop_item in props {
             if let Item::Property {
                 label,
@@ -942,13 +1224,32 @@ fn render_property_files(
             } = prop_item
             {
                 let display_name = camel_to_spaced(name);
-                let badge = proof_badge(proof_status);
-                let badge_str = if badge.is_empty() {
+                let intentional_cex = is_intentional_counterexample(doc);
+                let icon = if intentional_cex && proof_badge(proof_status).is_empty() {
+                    "✗".to_string()
+                } else {
+                    proof_badge(proof_status)
+                };
+                let icon_prefix = if icon.is_empty() {
                     String::new()
                 } else {
-                    format!("  {badge}")
+                    format!("{icon} ")
                 };
-                let _ = writeln!(out, "### {label} — {display_name}{badge_str}\n");
+                let _ = writeln!(out, "### {icon_prefix}{label} — {display_name}\n");
+
+                // Surface "intentionally disproven" status above any other
+                // verification callouts so it cannot be mistaken for a
+                // proven guarantee when skimming.
+                if intentional_cex {
+                    out.push_str(&intentional_counterexample_callout());
+                }
+
+                if let Some(detail) = proof_detail_line(proof_status) {
+                    let _ = writeln!(out, "> {detail}\n");
+                }
+                if let Some(callout) = render_failure_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
 
                 // Doc lines
                 if !doc.is_empty() {
@@ -974,20 +1275,61 @@ fn render_property_files(
                     let _ = writeln!(out, "{desc}\n");
                 }
 
-                // Involved functions and types
-                let involved = find_involved_symbols(body, doc, symbols, &current_file);
-                if !involved.is_empty() {
-                    let _ = writeln!(out, "**Involved:** {}\n", involved.join(", "));
+                // Proof-details callout (overrides + bounded-loop iterations)
+                // when the manifest carries that metadata for this property.
+                if let Some(callout) = render_proof_details_callout(proof_status) {
+                    out.push_str(&callout);
+                }
+                // "Verify this yourself" rerun command from the manifest.
+                if let Some(section) = render_verify_command_section(proof_status) {
+                    out.push_str(&section);
                 }
 
-                // Details fold
+                // Formal-property fold first — the code itself is the most
+                // information-dense thing on the page, so put it where the
+                // eye lands after the heading + prose, with the "Involved"
+                // cross-reference list as a follow-on aid.
                 if !options.no_details && !body.is_empty() {
                     let _ = writeln!(
                         out,
                         "<details><summary>Formal property (Cryptol)</summary>\n"
                     );
-                    let _ = writeln!(out, "```cryptol\n{body}\n```\n");
+                    // Use `haskell` here — highlight.js (docfx's bundled
+                    // highlighter) doesn't recognize a `cryptol` tag, but
+                    // Cryptol's surface syntax (`module`, `where`, `if /
+                    // then / else`, `==>`, `--` comments, numeric literals)
+                    // overlaps closely enough with Haskell that the Haskell
+                    // grammar produces a perfectly reasonable colorization.
+                    let _ = writeln!(out, "```haskell\n{body}\n```\n");
                     let _ = writeln!(out, "</details>\n");
+                }
+
+                // Involved functions and types
+                let involved = find_involved_symbols(body, doc, symbols, &current_file);
+
+                // Transitive implementation-equivalence callout.
+                // Computed from the same body+doc text so it never goes out
+                // of sync with the "Involved:" link list rendered below.
+                //
+                // Suppressed for intentional counterexamples: a "✓
+                // Implementation equivalence proven" line next to a
+                // deliberately-false property reads as "this claim is
+                // safe", which is exactly the wrong takeaway. The
+                // counterexample callout above already states the right
+                // thing — the implementation refutes the claim too.
+                if !intentional_cex {
+                    let fn_status = function_status_map(items);
+                    let involved_fn_names =
+                        find_involved_function_names(body, doc, &fn_status);
+                    if let Some(callout) =
+                        render_implementation_equivalence_callout(&involved_fn_names, &fn_status)
+                    {
+                        out.push_str(&callout);
+                    }
+                }
+
+                if !involved.is_empty() {
+                    let _ = writeln!(out, "**Involved:** {}\n", involved.join(", "));
                 }
             }
         }
@@ -1056,16 +1398,91 @@ fn render_docfx_toc(title: &str, items: &[Item]) -> String {
 fn first_doc_line(doc: &[String]) -> String {
     let mut parts = Vec::new();
     for line in doc {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+        // A blank line ends the lead paragraph.
+        if line.trim().is_empty() {
             break;
         }
+        // An indented line marks the start of a code/layout block.
+        // Stop before it so the description column never spills the block
+        // contents in a flattened, comma-less wall.
+        if line.starts_with("  ") || line.starts_with('\t') {
+            break;
+        }
+        let trimmed = line.trim();
         parts.push(trimmed);
         if trimmed.ends_with('.') || trimmed.ends_with('!') || trimmed.ends_with('?') {
             break;
         }
     }
     parts.join(" ")
+}
+
+/// Escape `|` characters and collapse newlines so a string can be embedded
+/// in a single Markdown table cell without spilling into extra columns or
+/// breaking the row.
+fn escape_md_cell(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '|' => out.push_str("\\|"),
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Build a short noun-phrase describing a Cryptol type so the
+/// Description column of record/struct field tables is never empty.
+///
+/// Recognizes the common shapes that appear in real specs:
+///   `Bit`            → "Boolean flag"
+///   `[N]`            → "`N`-bit value"      (N may be a literal or named type)
+///   `[N][8]`         → "Buffer of `N` bytes"
+///   `[N][M]`         → "Array of `N` `M`-bit values"
+///   `[N]TypeName`    → "Array of `N` `TypeName` values"
+///   `TypeName`       → "`TypeName` value"
+///   `A -> B`         → ""  (function types are self-documenting)
+fn describe_type(ty: &str) -> String {
+    let t = ty.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    // Don't try to describe function types — they're already readable.
+    if t.contains("->") {
+        return String::new();
+    }
+    if t == "Bit" {
+        return "Boolean flag".into();
+    }
+    // [N] ...
+    if let Some(rest) = t.strip_prefix('[')
+        && let Some(close) = rest.find(']')
+    {
+        let count = rest[..close].trim();
+        let inner = rest[close + 1..].trim();
+        if inner.is_empty() {
+            return format!("`{count}`-bit value");
+        }
+        if inner == "[8]" {
+            return format!("Buffer of `{count}` bytes");
+        }
+        if let Some(inner_rest) = inner.strip_prefix('[')
+            && let Some(inner_close) = inner_rest.find(']')
+            && inner_rest[inner_close + 1..].trim().is_empty()
+        {
+            let width = inner_rest[..inner_close].trim();
+            return format!("Array of `{count}` `{width}`-bit values");
+        }
+        return format!("Array of `{count}` `{inner}` values");
+    }
+    // Capitalized single identifier → "`Foo` value"
+    if t.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return format!("`{t}` value");
+    }
+    String::new()
 }
 
 fn prefixed_file(prefix: &str, file: &str) -> String {
@@ -1083,6 +1500,36 @@ fn clean_type_width(width: &str) -> String {
         .unwrap_or(width)
         .trim()
         .to_string()
+}
+
+/// Emit the underlying-type line for a `type Foo = …` alias.
+///
+/// The parser strips the surrounding `[...]` brackets off the RHS, so what
+/// we get back here is e.g. `"256"` for `type HmacKey = [256]`.  We
+/// re-bracket and look up a friendly noun-phrase via `describe_type`, then
+/// emit a single labeled line so the page reads as
+///
+/// ```text
+/// **Type:** `[256]` — `256`-bit value
+/// ```
+///
+/// instead of an orphan magenta `256` floating under the heading.
+fn render_type_alias_width(out: &mut String, width: &str) {
+    let clean = clean_type_width(width);
+    if clean.is_empty() {
+        return;
+    }
+    let bracketed = if clean.starts_with('[') {
+        clean.clone()
+    } else {
+        format!("[{clean}]")
+    };
+    let friendly = describe_type(&bracketed);
+    if friendly.is_empty() {
+        let _ = writeln!(out, "**Type:** `{bracketed}`\n");
+    } else {
+        let _ = writeln!(out, "**Type:** `{bracketed}` — {friendly}\n");
+    }
 }
 
 fn sanitize_type_doc(doc: &[String]) -> Option<String> {
@@ -1196,19 +1643,468 @@ fn find_involved_symbols(
     involved
 }
 
+/// A single-character verification marker for use at the start of a heading
+/// or inline next to a name.  Kept intentionally minimal so the rendered
+/// docs scan cleanly instead of feeling like AI-generated bullet soup.
+///
+/// Verdicts:
+///   `✓` proven   |  `✗` failed or not yet verified   |  `~` assumed   |  empty
 fn proof_badge(status: &Option<ProofStatus>) -> String {
     match status {
-        Some(ProofStatus::Proven { solver, time_secs }) => {
-            let time_str = time_secs
-                .map(|t| format!(", {t:.2}s"))
-                .unwrap_or_default();
-            format!("✅ Proven ({solver}{time_str})")
-        }
-        Some(ProofStatus::Assumed) => "⚠\u{fe0f} Assumed".into(),
-        Some(ProofStatus::Failed { reason }) => format!("❌ Failed: {reason}"),
-        Some(ProofStatus::NotAttempted) => "⬚ Not yet verified".into(),
+        Some(ProofStatus::Proven { .. }) => "✓".into(),
+        Some(ProofStatus::Failed { .. }) => "✗".into(),
+        Some(ProofStatus::Assumed) => "~".into(),
+        Some(ProofStatus::NotAttempted) => "✗".into(),
         None => String::new(),
     }
+}
+
+/// Detect a property whose doc-comment declares it as an intentional
+/// counterexample (`EXPECTED VERDICT: FAILS`). Such properties encode
+/// *deliberately false* claims about the protocol — the Cryptol prover
+/// is expected to refute each one with a concrete counterexample, and
+/// the rendered docs must surface that disproof unambiguously so the
+/// page cannot be misread as a proven safety guarantee.
+///
+/// We detect it from the doc text rather than the proof manifest because
+/// the Cryptol-property prover log is not always wired into pretty-specs's
+/// `--proof-status` input; the spec author's `EXPECTED VERDICT: FAILS`
+/// comment is the authoritative source-level signal.
+fn is_intentional_counterexample(doc: &[String]) -> bool {
+    doc.iter().any(|line| line.contains("EXPECTED VERDICT: FAILS"))
+}
+
+/// Loud, unambiguous callout placed immediately below the heading of an
+/// intentional-counterexample property. Renders as a blockquote so it sits
+/// visually above the `EXPECTED VERDICT` note that follows from the doc
+/// text, and uses bold `✗` markers on both ends so it can never be skimmed
+/// past as a "✓ proven" guarantee.
+fn intentional_counterexample_callout() -> String {
+    "> **✗ Intentionally disproven.** This property is a *deliberately \
+     false* claim about the protocol. The Cryptol prover refutes it with \
+     a concrete counterexample (see the **Note** below); the property \
+     exists to make the failure mode visible to readers and is **not** a \
+     safety guarantee of the implementation.\n\n"
+        .to_string()
+}
+
+/// Long-form verdict reason, suitable for a callout below a property heading.
+/// Returns `None` when the status carries no extra context worth showing.
+fn proof_detail_line(status: &Option<ProofStatus>) -> Option<String> {
+    match status {
+        Some(ProofStatus::Failed { reason, .. }) => {
+            Some(format!("**Verification failed:** {reason}"))
+        }
+        Some(ProofStatus::NotAttempted) => {
+            Some("**Not yet verified.**".into())
+        }
+        Some(ProofStatus::Assumed) => {
+            Some("**Assumed** (treated as an axiom).".into())
+        }
+        _ => None,
+    }
+}
+
+/// Render an expanded "Verification failure" callout for a `Failed` status
+/// that carries solver diagnostics (counterexample text and/or a verifier
+/// log excerpt). Returns `None` when the status is not `Failed` or when no
+/// diagnostics are present — in which case the short `proof_detail_line`
+/// reason on its own is the right amount of detail.
+///
+/// Counterexamples are rendered in a `<details>` fold so the page stays
+/// scannable while still letting curious readers click through to the
+/// concrete witness or solver trace that broke the claim.
+fn render_failure_details_callout(status: &Option<ProofStatus>) -> Option<String> {
+    let (reason, counterexample, log_excerpt) = match status {
+        Some(ProofStatus::Failed {
+            reason,
+            counterexample,
+            log_excerpt,
+            ..
+        }) => (reason.as_str(), counterexample.as_deref(), log_excerpt.as_deref()),
+        _ => return None,
+    };
+    if counterexample.is_none() && log_excerpt.is_none() {
+        return None;
+    }
+
+    let mut out = String::new();
+    let _ = writeln!(out, "> **Why this failed** — {reason}.");
+    out.push('\n');
+    if let Some(cx) = counterexample {
+        let _ = writeln!(out, "<details><summary>Counterexample</summary>\n");
+        let _ = writeln!(out, "```text\n{}\n```\n", cx.trim_end());
+        let _ = writeln!(out, "</details>\n");
+    }
+    if let Some(log) = log_excerpt {
+        let _ = writeln!(out, "<details><summary>Verifier log excerpt</summary>\n");
+        let _ = writeln!(out, "```text\n{}\n```\n", log.trim_end());
+        let _ = writeln!(out, "</details>\n");
+    }
+    Some(out)
+}
+
+/// Render a "Verify this yourself" section that shows the copy-pasteable
+/// shell command (and/or generated SAW script path) recorded in the proof
+/// manifest. Returns `None` when neither field is present.
+///
+/// The section lives below the proof-details / failure callouts so a
+/// reader can act on what they just saw: re-run a failing proof to inspect
+/// the counterexample interactively, or sanity-check a green verdict
+/// against the same script the pipeline ran.
+fn render_verify_command_section(status: &Option<ProofStatus>) -> Option<String> {
+    let (verify_command, verify_script) = match status {
+        Some(ProofStatus::Proven {
+            verify_command,
+            verify_script,
+            ..
+        })
+        | Some(ProofStatus::Failed {
+            verify_command,
+            verify_script,
+            ..
+        }) => (verify_command.as_deref(), verify_script.as_deref()),
+        _ => return None,
+    };
+    if verify_command.is_none() && verify_script.is_none() {
+        return None;
+    }
+
+    let mut out = String::new();
+    let _ = writeln!(out, "### Verify this yourself\n");
+    // Prefer the manifest-recorded command verbatim (it knows the working
+    // directory and any env vars).  Fall back to synthesising `saw <path>`
+    // from just the script path when that's all we have.
+    let command = verify_command
+        .map(|s| s.to_string())
+        .or_else(|| verify_script.map(|path| format!("saw \"{path}\"")));
+    if let Some(cmd) = command {
+        let _ = writeln!(out, "Re-run the proof locally:\n");
+        let _ = writeln!(out, "```sh\n{}\n```\n", cmd.trim());
+    }
+    if let Some(script) = verify_script {
+        // Only emit the script-path note when it adds information beyond
+        // what `verify_command` already shows.
+        if verify_command
+            .map(|cmd| !cmd.contains(script))
+            .unwrap_or(true)
+        {
+            let _ = writeln!(out, "Script: `{script}`\n");
+        }
+    }
+    Some(out)
+}
+
+/// Render an expanded "Proof details" blockquote for a `Proven` status that
+/// carries override or bounded-loop metadata.  Returns `None` when the
+/// status is anything other than `Proven` or when neither `overrides` nor
+/// `iterations` is populated — that way pages for ordinary unbounded proofs
+/// stay clutter-free.
+///
+/// When present, the callout surfaces:
+/// - the solver the proof was discharged with;
+/// - the loop bound (e.g. `MAX_LEN`) the proof was checked at, so readers
+///   know the bounded-model caveat;
+/// - the list of `*_unsafe_assume_spec` / overridden functions the proof
+///   depended on, so the trust story is explicit (the verdict is only as
+///   strong as those overrides).
+fn render_proof_details_callout(status: &Option<ProofStatus>) -> Option<String> {
+    let (solver, time_secs, overrides, iterations) = match status {
+        Some(ProofStatus::Proven {
+            solver,
+            time_secs,
+            overrides,
+            iterations,
+            ..
+        }) => (solver.as_str(), *time_secs, overrides.as_slice(), *iterations),
+        _ => return None,
+    };
+    if overrides.is_empty() && iterations.is_none() {
+        return None;
+    }
+
+    let mut out = String::new();
+    let _ = writeln!(out, "> **Proof details** — discharged with `{solver}`.");
+    if let Some(n) = iterations {
+        let _ = writeln!(out, ">");
+        let plural = if n == 1 { "iteration" } else { "iterations" };
+        let _ = writeln!(
+            out,
+            "> Bounded-loop proof: validated for **{n} loop {plural}**. Inputs that exercise the loop more times than this fall outside the proof's scope."
+        );
+    }
+    if !overrides.is_empty() {
+        let _ = writeln!(out, ">");
+        let plural = if overrides.len() == 1 { "override" } else { "overrides" };
+        let _ = writeln!(
+            out,
+            "> Used {n} {plural} — each is **trusted** to behave per its spec and not re-verified here:",
+            n = overrides.len()
+        );
+        for o in overrides {
+            let _ = writeln!(out, "> - `{o}`");
+        }
+    }
+    if let Some(t) = time_secs {
+        let _ = writeln!(out, ">");
+        let _ = writeln!(out, "> Solver wall-clock: {t:.2}s.");
+    }
+    out.push('\n');
+    Some(out)
+}
+
+/// Build a `function name → proof status` lookup over the items in this
+/// module.  Used by the property renderer to compute the *transitive*
+/// implementation-equivalence story for each property: a property whose
+/// Cryptol-level proof passes is only as strong against the C++/Rust
+/// implementation as the weakest equivalence proof of every function the
+/// property mentions.
+fn function_status_map(items: &[Item]) -> HashMap<&str, &Option<ProofStatus>> {
+    items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Function {
+                name,
+                signature,
+                branches,
+                body,
+                proof_status,
+                ..
+            } => {
+                // Skip value bindings — they aren't independently verified.
+                if is_constant_binding(name, signature, body, branches) {
+                    return None;
+                }
+                if !signature.contains("->") && branches.is_empty() {
+                    return None;
+                }
+                Some((name.as_str(), proof_status))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Return the **bare names** of functions referenced in a property body/doc.
+/// Mirrors `find_involved_symbols` but yields raw identifiers so callers can
+/// look them up in `function_status_map`.
+fn find_involved_function_names(
+    body: &str,
+    doc: &[String],
+    fn_status: &HashMap<&str, &Option<ProofStatus>>,
+) -> Vec<String> {
+    use crate::linker::contains_word;
+    let all_text = format!("{body} {}", doc.join(" "));
+    let mut names: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    // Sort by length descending so the longer-name-first rule of
+    // `find_involved_symbols` is preserved (avoids spurious sub-string hits).
+    let mut keys: Vec<&str> = fn_status.keys().copied().collect();
+    keys.sort_by(|a, b| b.len().cmp(&a.len()));
+    for name in keys {
+        if contains_word(&all_text, name) && seen.insert(name.to_string()) {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    names
+}
+
+/// Render a callout describing **implementation-equivalence coverage** for a
+/// property — i.e., the *transitive* part of the proof.
+///
+/// The Cryptol property only guarantees a fact about the Cryptol shim.
+/// For that guarantee to carry over to the production implementation, every
+/// function the property mentions must also have a SAW `llvm_verify` /
+/// `mir_verify` equivalence proof.  This callout makes that gap explicit so
+/// readers don't mistake a green Cryptol `✓` for an end-to-end proof.
+///
+/// Returns `None` when no manifest data is available at all (in which case
+/// the property page omits the callout entirely rather than imply
+/// "unverified" when nothing was ever attempted).
+fn render_implementation_equivalence_callout(
+    involved: &[String],
+    fn_status: &HashMap<&str, &Option<ProofStatus>>,
+) -> Option<String> {
+    if involved.is_empty() {
+        return None;
+    }
+    let mut proven: Vec<&str> = Vec::new();
+    let mut assumed: Vec<&str> = Vec::new();
+    let mut failed: Vec<&str> = Vec::new();
+    let mut unverified: Vec<&str> = Vec::new(); // NotAttempted or no manifest entry
+    let mut any_status_seen = false;
+    for name in involved {
+        match fn_status.get(name.as_str()).and_then(|s| s.as_ref()) {
+            Some(ProofStatus::Proven { .. }) => {
+                any_status_seen = true;
+                proven.push(name.as_str());
+            }
+            Some(ProofStatus::Assumed) => {
+                any_status_seen = true;
+                assumed.push(name.as_str());
+            }
+            Some(ProofStatus::Failed { .. }) => {
+                any_status_seen = true;
+                failed.push(name.as_str());
+            }
+            Some(ProofStatus::NotAttempted) => {
+                any_status_seen = true;
+                unverified.push(name.as_str());
+            }
+            None => unverified.push(name.as_str()),
+        }
+    }
+    if !any_status_seen {
+        // No manifest data for any of the involved functions — silent rather
+        // than misleading.
+        return None;
+    }
+
+    let fmt = |xs: &[&str]| {
+        xs.iter()
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let total = involved.len();
+    let mut out = String::new();
+    if failed.is_empty() && assumed.is_empty() && unverified.is_empty() {
+        let _ = writeln!(
+            out,
+            "> ✓ **Implementation equivalence proven.** All {total} involved \
+             function(s) have a SAW equivalence proof against the C++/Rust \
+             implementation, so this property's guarantee transfers to the \
+             compiled code."
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "> ⚠ **Implementation equivalence is incomplete.** This property \
+             holds against the Cryptol model. For the guarantee to carry over \
+             to the compiled code, every involved function must also have a \
+             SAW equivalence proof."
+        );
+        let _ = writeln!(out, ">");
+        if !proven.is_empty() {
+            let _ = writeln!(out, "> - ✓ proven equivalent: {}", fmt(&proven));
+        }
+        if !assumed.is_empty() {
+            let _ = writeln!(
+                out,
+                "> - ~ **assumed** (treated as an axiom — *not* verified against the implementation): {}",
+                fmt(&assumed)
+            );
+        }
+        if !failed.is_empty() {
+            let _ = writeln!(
+                out,
+                "> - ✗ equivalence proof **failed**: {}",
+                fmt(&failed)
+            );
+        }
+        if !unverified.is_empty() {
+            let _ = writeln!(
+                out,
+                "> - ✗ equivalence proof **not yet attempted**: {}",
+                fmt(&unverified)
+            );
+        }
+    }
+    out.push('\n');
+    Some(out)
+}
+
+/// Aggregate verification status across the properties of a single category.
+///
+/// Returns a short, minimalist badge string suitable for embedding as a
+/// table cell.  Stays terse on purpose so the home-page table reads as a
+/// scan-friendly status column rather than a wall of emoji.
+///
+/// Shapes:
+///   "5/5 ✓"
+///   "3/5 ✓ · 2 ✗"
+///   "4/5 ✓ end-to-end · 1 ⚠ design-only"
+///   "0/5"          (no manifest data for this category)
+///
+/// A property only counts as ✓ end-to-end when (a) its own proof_status is
+/// Proven AND (b) every Cryptol function it mentions also has a Proven SAW
+/// equivalence proof. Properties that pass the solver but rely on at least
+/// one unverified function are bucketed as "design-only" (⚠) so the home
+/// page reflects the transitive trust gap surfaced on individual property
+/// pages.
+fn render_category_status(
+    labels: &[String],
+    prop_info: &std::collections::HashMap<&str, (&Option<ProofStatus>, &str, &[String])>,
+    fn_status: &HashMap<&str, &Option<ProofStatus>>,
+) -> String {
+    let total = labels.len();
+    let mut end_to_end = 0usize;
+    let mut design_only = 0usize;
+    let mut assumed = 0usize;
+    let mut failed = 0usize;
+    let mut not_attempted = 0usize;
+    let mut missing = 0usize;
+
+    for label in labels {
+        match prop_info.get(label.as_str()) {
+            Some((status, body, doc)) => match status {
+                Some(ProofStatus::Proven { .. }) => {
+                    let involved = find_involved_function_names(body, doc, fn_status);
+                    let all_proven = involved.iter().all(|name| {
+                        matches!(
+                            fn_status.get(name.as_str()).and_then(|s| s.as_ref()),
+                            Some(ProofStatus::Proven { .. })
+                        )
+                    });
+                    if all_proven {
+                        end_to_end += 1;
+                    } else {
+                        design_only += 1;
+                    }
+                }
+                Some(ProofStatus::Assumed) => assumed += 1,
+                Some(ProofStatus::Failed { .. }) => failed += 1,
+                Some(ProofStatus::NotAttempted) => not_attempted += 1,
+                None => missing += 1,
+            },
+            None => missing += 1,
+        }
+    }
+
+    // No proof-manifest data at all for this category.
+    if end_to_end + design_only + assumed + failed + not_attempted == 0 {
+        return format!("0/{total}");
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    // Skip the "end-to-end" segment entirely when nothing has been proven
+    // end-to-end yet — "0/5 ✓ end-to-end · 5 ⚠ design-only" reads as
+    // self-contradictory.  Lead with the meaningful status instead.
+    if end_to_end > 0 {
+        parts.push(format!("{end_to_end}/{total} ✓ end-to-end"));
+    }
+    if design_only > 0 {
+        parts.push(format!("{design_only} ⚠ design-only"));
+    }
+    if failed > 0 {
+        parts.push(format!("{failed} ✗"));
+    }
+    if not_attempted + missing > 0 {
+        parts.push(format!("{} unverified", not_attempted + missing));
+    }
+    if assumed > 0 {
+        parts.push(format!("{assumed} ~ assumed"));
+    }
+
+    // Defensive: if every counter was zero except end_to_end (which we
+    // skipped), fall back to the bare ratio so the cell isn't empty.
+    if parts.is_empty() {
+        return format!("0/{total}");
+    }
+
+    parts.join(" · ")
 }
 
 fn anchor_for(label: &str, name: &str) -> String {
@@ -1309,6 +2205,95 @@ fn is_simple_constructor(name: &str, _signature: &str, branches: &[Branch], body
     rhs.starts_with('(') && rhs.contains(',') && rhs.len() < 40
 }
 
+/// Detect "constant" value bindings like `FM_Disabled_b = 0 : [8]`.
+///
+/// These are top-level value declarations with **no parameters** and **no
+/// arrow signature**. They're parsed into `Item::Function` (Cryptol doesn't
+/// distinguish "constant" from "function"), but they aren't really functions
+/// and shouldn't be listed in the Functions index next to real decision
+/// procedures.
+fn is_constant_binding(
+    name: &str,
+    signature: &str,
+    body: &str,
+    branches: &[Branch],
+) -> bool {
+    // A real function has either a top-level arrow signature or branching logic.
+    if signature.contains("->") {
+        return false;
+    }
+    if branches.iter().any(|b| b.condition.is_some()) {
+        return false;
+    }
+    let first_line = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let lhs = match first_line.find('=') {
+        Some(p) => first_line[..p].trim(),
+        None => return false,
+    };
+    // Strip optional `: type` annotation on the LHS.
+    let lhs = match lhs.find(':') {
+        Some(p) => lhs[..p].trim(),
+        None => lhs,
+    };
+    lhs == name
+}
+
+/// Render a doc-comment block, preserving paragraph structure and turning
+/// contiguous indented runs into fenced code blocks. Blank lines become
+/// paragraph breaks; lines with 2+ spaces (or a tab) of leading indent are
+/// grouped into ```` ```text ```` blocks so byte-layout listings and inline
+/// snippets render as monospace instead of collapsing into a single wall
+/// of prose.
+fn render_doc_body<F>(out: &mut String, doc: &[String], mut resolve: F)
+where
+    F: FnMut(&str) -> String,
+{
+    let mut in_code = false;
+    let mut blank_pending = false;
+    let mut wrote_any = false;
+    for line in doc {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            // Inside a code block, blank lines are part of the block.
+            if in_code {
+                out.push('\n');
+            } else if wrote_any {
+                blank_pending = true;
+            }
+            continue;
+        }
+        let indented = line.starts_with("  ") || line.starts_with('\t');
+        if indented {
+            if !in_code {
+                if wrote_any {
+                    out.push('\n');
+                }
+                out.push_str("```text\n");
+                in_code = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+            wrote_any = true;
+        } else {
+            if in_code {
+                out.push_str("```\n\n");
+                in_code = false;
+            } else if blank_pending {
+                out.push('\n');
+            }
+            let _ = writeln!(out, "{}", resolve(line));
+            wrote_any = true;
+        }
+        blank_pending = false;
+    }
+    if in_code {
+        out.push_str("```\n");
+    }
+    if wrote_any {
+        out.push('\n');
+    }
+}
+
 /// Derive category slug from section title.
 fn category_slug_from_title(title: &str) -> String {
     let payload = strip_category_prefix(title);
@@ -1325,7 +2310,27 @@ struct ParsedSignature {
 }
 
 fn parse_signature(signature: &str) -> ParsedSignature {
-    let normalized = signature
+    // Cryptol accepts `//` line comments inside type signatures (e.g.
+    //   `Bit ->          // fleetEnabled`
+    //    `Bit ->          // hasKey`
+    //    ...
+    // ).  If we don't strip them out here, two things break:
+    //
+    //   (1) the comment text leaks into the rendered parameter type
+    //       (`hasKey: // fleetEnabled Bit`), and
+    //   (2) any `(` / `)` / `[` / `]` inside the comment text desyncs the
+    //       bracket counter in `split_top_level_token`, which can collapse
+    //       a whole `->`-chain into a single "return type" string.
+    //
+    // Strip line-by-line BEFORE we whitespace-normalize so we never see the
+    // `//` sequence in the collapsed string.
+    let stripped: String = signature
+        .lines()
+        .map(strip_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let normalized = stripped
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -1398,8 +2403,12 @@ fn render_structured_signature<F>(
 ) where
     F: FnMut(&str) -> String,
 {
+    // When the spec has no signature line (e.g. a byte-constant binding
+    // such as `FM_Disabled_b = 0 : [8]`), silently skip the Signature
+    // section.  The Formal-definition fold below already shows the body,
+    // which carries the inline type annotation, so an explicit
+    // "(not available)" line only adds noise.
     if parsed.raw.is_empty() {
-        let _ = writeln!(out, "**Signature:** *(not available)*\n");
         return;
     }
 
@@ -1504,11 +2513,31 @@ fn split_top_level_once<'a>(s: &'a str, token: &str) -> Option<(&'a str, &'a str
     None
 }
 
+/// Strip the first `//` line comment from a single line of a signature,
+/// returning the prefix.  Used by `parse_signature` so trailing per-param
+/// comments don't leak into the rendered type or break bracket counting.
+///
+/// Cryptol allows `//` line comments anywhere whitespace is legal, including
+/// mid-signature (e.g. `Bit ->          // fleetEnabled`).  Without this
+/// stripping, the comment text bleeds into the next parameter's type and any
+/// `)` / `]` in the comment desyncs the bracket-balance tracker used to find
+/// top-level `->` splits.
+///
+/// This is safe to apply unconditionally to signature strings: type
+/// signatures never contain string literals (Cryptol has no string-typed
+/// values at the type level), so a `//` here is always either a comment or
+/// invalid Cryptol.
+fn strip_line_comment(line: &str) -> &str {
+    match line.find("//") {
+        Some(idx) => &line[..idx],
+        None => line,
+    }
+}
+
 fn split_top_level_token(s: &str, token: &str) -> Vec<String> {
     if token.is_empty() {
         return vec![s.trim().to_string()];
     }
-
     let bytes = s.as_bytes();
     let token_bytes = token.as_bytes();
     let mut parts = Vec::new();
@@ -1614,6 +2643,12 @@ fn sanitize_mermaid(text: &str) -> String {
     text.replace('"', "'").replace('#', "&#35;")
 }
 
+/// Render the cross-function call graph as a Mermaid diagram.
+///
+/// Currently unused in the rendered docs (the home-page call-graph block
+/// was retired because it didn't pull its weight visually), but kept
+/// around so we can resurface it elsewhere without re-deriving the logic.
+#[allow(dead_code)]
 fn render_call_graph_mermaid(
     edges: &[(String, String)],
     function_names: &[String],
@@ -2012,11 +3047,141 @@ mod tests {
             proof_badge(&Some(ProofStatus::Proven {
                 solver: "z3".into(),
                 time_secs: Some(0.42),
+                overrides: vec![],
+                iterations: None,
+                verify_command: None,
+                verify_script: None,
             })),
-            "✅ Proven (z3, 0.42s)"
+            "✓"
         );
-        assert_eq!(proof_badge(&Some(ProofStatus::Assumed)), "⚠\u{fe0f} Assumed");
+        assert_eq!(
+            proof_badge(&Some(ProofStatus::Failed {
+                reason: "counterexample".into(),
+                counterexample: None,
+                log_excerpt: None,
+                verify_command: None,
+                verify_script: None,
+            })),
+            "✗"
+        );
+        assert_eq!(proof_badge(&Some(ProofStatus::Assumed)), "~");
+        assert_eq!(proof_badge(&Some(ProofStatus::NotAttempted)), "✗");
         assert_eq!(proof_badge(&None), "");
+    }
+
+    #[test]
+    fn proof_details_callout_omitted_without_extras() {
+        // No overrides + no iterations → no callout (page stays clean).
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: Some(1.0),
+            overrides: vec![],
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
+        });
+        assert!(render_proof_details_callout(&status).is_none());
+
+        // Non-proven statuses never produce a callout.
+        assert!(render_proof_details_callout(&Some(ProofStatus::Assumed)).is_none());
+        assert!(
+            render_proof_details_callout(&Some(ProofStatus::Failed {
+                reason: "x".into(),
+                counterexample: None,
+                log_excerpt: None,
+                verify_command: None,
+                verify_script: None,
+            }))
+            .is_none()
+        );
+        assert!(render_proof_details_callout(&None).is_none());
+    }
+
+    #[test]
+    fn proof_details_callout_reports_overrides_and_iterations() {
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: Some(12.3),
+            overrides: vec!["memcpy".into(), "operator new".into()],
+            iterations: Some(4),
+            verify_command: None,
+            verify_script: None,
+        });
+        let out = render_proof_details_callout(&status).expect("callout present");
+        assert!(out.contains("Proof details"), "header missing: {out}");
+        assert!(out.contains("`z3`"), "solver missing: {out}");
+        assert!(out.contains("**4 loop iterations**"), "iterations missing: {out}");
+        assert!(out.contains("2 overrides"), "override count missing: {out}");
+        assert!(out.contains("`memcpy`"), "override name missing: {out}");
+        assert!(out.contains("`operator new`"), "override name missing: {out}");
+        assert!(out.contains("12.30s"), "wall-clock missing: {out}");
+    }
+
+    #[test]
+    fn proof_details_callout_singular_iteration() {
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: None,
+            overrides: vec![],
+            iterations: Some(1),
+            verify_command: None,
+            verify_script: None,
+        });
+        let out = render_proof_details_callout(&status).expect("callout present");
+        assert!(out.contains("**1 loop iteration**"), "singular missing: {out}");
+        assert!(!out.contains("iterations**"), "incorrect plural: {out}");
+    }
+
+    #[test]
+    fn failure_details_callout_omitted_without_diagnostics() {
+        // A plain Failed (no counterexample, no log) produces no fold — the
+        // short reason from proof_detail_line is enough on its own.
+        let status = Some(ProofStatus::Failed {
+            reason: "error during verification".into(),
+            counterexample: None,
+            log_excerpt: None,
+            verify_command: None,
+            verify_script: None,
+        });
+        assert!(render_failure_details_callout(&status).is_none());
+
+        // Non-failed statuses never produce a failure callout.
+        assert!(
+            render_failure_details_callout(&Some(ProofStatus::Proven {
+                solver: "z3".into(),
+                time_secs: None,
+                overrides: vec![],
+                iterations: None,
+                verify_command: None,
+                verify_script: None,
+            }))
+            .is_none()
+        );
+        assert!(render_failure_details_callout(&None).is_none());
+    }
+
+    #[test]
+    fn failure_details_callout_renders_counterexample_and_log() {
+        let status = Some(ProofStatus::Failed {
+            reason: "counterexample found".into(),
+            counterexample: Some("x = 0\ny = 1\n".into()),
+            log_excerpt: Some("LLVM verification failed at line 42".into()),
+            verify_command: None,
+            verify_script: None,
+        });
+        let out = render_failure_details_callout(&status).expect("callout present");
+        assert!(out.contains("Why this failed"), "header missing: {out}");
+        assert!(out.contains("counterexample found"), "reason missing: {out}");
+        assert!(
+            out.contains("<details><summary>Counterexample</summary>"),
+            "counterexample fold missing: {out}"
+        );
+        assert!(out.contains("x = 0"), "counterexample body missing: {out}");
+        assert!(
+            out.contains("<details><summary>Verifier log excerpt</summary>"),
+            "log fold missing: {out}"
+        );
+        assert!(out.contains("line 42"), "log body missing: {out}");
     }
 
     #[test]
@@ -2034,6 +3199,96 @@ mod tests {
         assert!(doc.contains("## Functions"), "should contain Functions section");
         assert!(doc.contains("### FleetMode"), "should contain FleetMode type");
         assert!(doc.contains("### `provisionKey`"), "should contain provisionKey function");
+    }
+
+    #[test]
+    fn intentional_counterexample_detection() {
+        // Positive: the documented marker triggers the badge override.
+        let doc = vec![
+            "P99: \"some tempting but wrong claim.\"".to_string(),
+            "".to_string(),
+            "EXPECTED VERDICT: FAILS.".to_string(),
+            "Counterexample: x = 0.".to_string(),
+        ];
+        assert!(is_intentional_counterexample(&doc));
+
+        // Negative: a regular PASS expectation must NOT be flagged.
+        let pass_doc = vec![
+            "P1: \"a real safety claim.\"".to_string(),
+            "EXPECTED VERDICT: PASS.".to_string(),
+        ];
+        assert!(!is_intentional_counterexample(&pass_doc));
+
+        // Negative: empty doc is not a counterexample.
+        assert!(!is_intentional_counterexample(&[]));
+    }
+
+    #[test]
+    fn intentional_counterexample_rendering_in_category_page() {
+        // Minimal spec with one Category III section containing a single
+        // EXPECTED VERDICT: FAILS property. Verifies that the rendered
+        // category page (a) marks the heading with ✗, (b) emits the loud
+        // "Intentionally disproven" callout, (c) swaps in the page-level
+        // "deliberately false" intro, and (d) suppresses the misleading
+        // "Implementation equivalence proven" callout that would otherwise
+        // render alongside a deliberately-false claim.
+        let source = r#"
+module Demo where
+
+// ---- Category Z: Intentional counterexamples ------------------------------
+
+// P99: "Some tempting but false claim about the protocol."
+//
+// EXPECTED VERDICT: FAILS.
+// Counterexample: x = 0 disproves the claim.
+property P99_TemptingButFalse x = x > 0
+"#;
+        let items = crate::parser::parse(source);
+        let symbols = SymbolTable::build(&items);
+        let tmpdir = std::env::temp_dir().join("pretty_specs_intentional_cex_test");
+        let _ = stdfs::remove_dir_all(&tmpdir);
+        let options = RenderOptions {
+            no_details: false,
+            title_override: None,
+            docfx: false,
+        };
+        render_multi_file(&items, &symbols, &tmpdir, &options).unwrap();
+
+        let cat_md = stdfs::read_to_string(
+            tmpdir.join("properties/intentional-counterexamples.md"),
+        )
+        .unwrap_or_else(|_| {
+            // Fall back to whatever single category file was produced — the
+            // test fixture only contains one section so there's exactly one.
+            let dir = tmpdir.join("properties");
+            let first = stdfs::read_dir(&dir)
+                .unwrap()
+                .next()
+                .expect("expected at least one category file")
+                .unwrap()
+                .path();
+            stdfs::read_to_string(first).unwrap()
+        });
+
+        assert!(
+            cat_md.contains("### ✗ P99"),
+            "heading should be prefixed with ✗ for intentional counterexample, got:\n{cat_md}"
+        );
+        assert!(
+            cat_md.contains("**✗ Intentionally disproven.**"),
+            "loud disproven callout missing, got:\n{cat_md}"
+        );
+        assert!(
+            cat_md.contains("**How to read this page.**")
+                && cat_md.contains("deliberately false"),
+            "page-level intro should swap to the deliberately-false variant, got:\n{cat_md}"
+        );
+        assert!(
+            !cat_md.contains("Implementation equivalence proven"),
+            "misleading equivalence callout must be suppressed for intentional counterexamples, got:\n{cat_md}"
+        );
+
+        let _ = stdfs::remove_dir_all(&tmpdir);
     }
 
     #[test]

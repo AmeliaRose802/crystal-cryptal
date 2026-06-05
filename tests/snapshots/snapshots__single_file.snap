@@ -81,12 +81,12 @@ A 2-bit enumeration with 3 variants.
 | `AD_NoRule` | 2 | |
 
 ### UUID
-`128`
+**Type:** `[128]` — `128`-bit value
 
-2.2 Structures used by getStatus. UUIDs are abstracted as 128-bit values.
+Well-formedness predicates for enum bit-vectors. 2.2 Structures used by getStatus.
 
 ### OptUUID
-`(Bit, UUID)`
+**Type:** `[(Bit, UUID)]` — `(Bit, UUID)`-bit value
 
 Option<UUID> is encoded as a (present?, value) pair.
 
@@ -94,47 +94,51 @@ Option<UUID> is encoded as a (present?, value) pair.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `fleetMode` | [FleetMode](#fleetmode) | |
-| `hasKey` | Bit | |
-| `keyId` | [OptUUID](#optuuid) | |
-| `isActive` | Bit | |
+| `fleetMode` | [FleetMode](#fleetmode) | `FleetMode` value |
+| `hasKey` | Bit | Boolean flag |
+| `keyId` | [OptUUID](#optuuid) | `OptUUID` value |
+| `isActive` | Bit | Boolean flag |
 
 ### Timestamp
-`64`
+**Type:** `[64]` — `64`-bit value
 
 true iff requestTimestamp <= currentTime && currentTime - requestTimestamp <= windowSeconds Timestamps and windows are unbounded naturals in spec; we use 64-bit.
 
 ### Window
-`64`
+**Type:** `[64]` — `64`-bit value
+
 
 ### HmacKey
-`256`
+**Type:** `[256]` — `256`-bit value
 
 4.3.2 isValidSignature — modelled abstractly with an uninterpreted HMAC. The Cryptol-level model treats HMAC-SHA256 as an opaque function from (key, payload) to a 256-bit tag, and constantTimeEquals as `==`.
 
 ### HmacTag
-`256`
+**Type:** `[256]` — `256`-bit value
+
 
 ### Request
-`256`
+**Type:** `[256]` — `256`-bit value
+
 
 ### FL
-`16`
+**Type:** `[16]` — `16`-bit value
 
 The encoder now prepends each variable-length field with its byte length (a fixed-width unsigned length tag). A parser reads exactly the declared number of bytes for each field, so no byte inside any field can be mistaken for a boundary.
 
 ### IW
-`8`
+**Type:** `[8]` — `8`-bit value
 
 Index/length width: one byte is more than enough for FL <= 127.
 
 ### FLs
-`2`
+**Type:** `[2]` — `2`-bit value
 
 The opaque `Request = [256]` is sufficient for HMAC algebra (P8, P9) but blocks any property that needs to look INSIDE the request. Bounded sizes for BMC: 2-byte fields, 2 headers per request.
 
 ### Ns
-`2`
+**Type:** `[2]` — `2`-bit value
+
 
 ### Field
 A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
@@ -142,8 +146,8 @@ A normalized (length, padded-buffer) field. Bytes beyond `len` are zero.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `len` | [[IW](#iw)] | |
-| `buf` | [[FLs](#fls)][8] | |
+| `len` | [[IW](#iw)] | `IW`-bit value |
+| `buf` | [[FLs](#fls)][8] | Buffer of `FLs` bytes |
 
 ### Header
 One header is a (name, value) pair plus a flag marking it as the auth header (x-fleet-authorization) so the canonicalizer can exclude it.
@@ -151,19 +155,19 @@ One header is a (name, value) pair plus a flag marking it as the auth header (x-
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | [Field](#field) | |
-| `value` | [Field](#field) | |
-| `isAuth` | Bit | |
+| `name` | [Field](#field) | `Field` value |
+| `value` | [Field](#field) | `Field` value |
+| `isAuth` | Bit | Boolean flag |
 
 ### RequestS
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `method` | [Field](#field) | |
-| `path` | [Field](#field) | |
-| `body` | [Field](#field) | |
-| `timestamp` | [Timestamp](#timestamp) | |
-| `hdrs` | [[Ns](#ns)][Header](#header) | |
+| `method` | [Field](#field) | `Field` value |
+| `path` | [Field](#field) | `Field` value |
+| `body` | [Field](#field) | `Field` value |
+| `timestamp` | [Timestamp](#timestamp) | `Timestamp` value |
+| `hdrs` | [[Ns](#ns)][Header](#header) | Array of `Ns` `Header` values |
 
 ## Functions
 
@@ -186,15 +190,7 @@ One header is a (name, value) pair plus a flag marking it as the auth header (x-
 
 </details>
 
-Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `[ProvisionResult](#provisionresult)`. Defaults to `[PR_Succeeded](#provisionresult)` when no prior condition matches.
-
-| # | Condition | Result |
-|---|-----------|--------|
-| 1 | ~ fleetEnabled | [PR_Disabled](#provisionresult) |
-| 2 | ~ validRequest | [PR_BadRequest](#provisionresult) |
-| 3 | vaultResult != [KV_Ok](#keyvaultresult) | [PR_InternalError](#provisionresult) |
-| 4 | keyIsActive | [PR_Unauthorized](#provisionresult) |
-| 5 | *(otherwise)* | [PR_Succeeded](#provisionresult) |
+Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `ProvisionResult`. Defaults to `PR_Succeeded` when no prior condition matches.
 
 ```mermaid
 flowchart TD
@@ -220,7 +216,7 @@ flowchart TD
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 provisionKey fleetEnabled validRequest vaultResult keyIsActive =
   if ~ fleetEnabled        then PR_Disabled
    | ~ validRequest        then PR_BadRequest
@@ -250,17 +246,7 @@ provisionKey fleetEnabled validRequest vaultResult keyIsActive =
 
 </details>
 
-Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `[EnrollmentResult](#enrollmentresult)`. Defaults to `[ER_Unauthorized](#enrollmentresult)` when no prior condition matches.
-
-| # | Condition | Result |
-|---|-----------|--------|
-| 1 | ~ fleetEnabled | [ER_Disabled](#enrollmentresult) |
-| 2 | ~ validMetadata | [ER_Unauthorized](#enrollmentresult) |
-| 3 | authResult == [AR_Authenticated](#authresult) |  |
-| 4 | activationResult == [AC_AlreadyActive](#activationresult) | [ER_Unauthorized](#enrollmentresult) |
-| 5 | *(otherwise)* | [ER_InternalError](#enrollmentresult)) |
-| 6 | authResult == [AR_VaultUnavailable](#authresult) | [ER_InternalError](#enrollmentresult) |
-| 7 | *(otherwise)* | [ER_Unauthorized](#enrollmentresult) |
+Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `EnrollmentResult`. Defaults to `ER_Unauthorized` when no prior condition matches.
 
 ```mermaid
 flowchart TD
@@ -291,7 +277,7 @@ flowchart TD
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 enrollDevice fleetEnabled validMetadata authResult activationResult =
   if ~ fleetEnabled                       then ER_Disabled
    | ~ validMetadata                      then ER_Unauthorized
@@ -331,7 +317,7 @@ Returns `True` only when all of `dateValid`, `signatureValid`, and `claimsValid`
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 authenticate dateValid signatureValid claimsValid =
   dateValid && signatureValid && claimsValid
 ```
@@ -364,7 +350,7 @@ Checks whether the request date is valid: validates a bounded condition over `re
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 isValidRequestDate requestTs currentTime windowSeconds =
   (requestTs <= currentTime)
   && ((currentTime - requestTs) <= windowSeconds)
@@ -397,7 +383,7 @@ Uninterpreted in proofs (SAW can treat this as a Cryptol primitive).
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 hmacSha256 k r = k ^ r ^ (r <<< 1)   // placeholder; specs only use equality
 ```
 
@@ -429,7 +415,7 @@ Checks whether the signature is valid by comparing the computed and expected val
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 isValidSignature key req providedSig =
   hmacSha256 key req == providedSig
 ```
@@ -454,15 +440,6 @@ isValidSignature key req providedSig =
 </details>
 
 Evaluates 6 conditions on `mode` and `decision` in priority order, returning the first applicable a tuple. Defaults to `(True, False)` when no prior condition matches.
-
-| # | Condition | Result |
-|---|-----------|--------|
-| 1 | mode == [AM_Off](#accessmode) | (True, False) |
-| 2 | mode == [AM_Audit](#accessmode) |  |
-| 3 | mode == [AM_Enforce](#accessmode) |  |
-| 4 | decision == [AD_Deny](#accessdecision) | (False, True) |
-| 5 | *(otherwise)* | (True,  False)) |
-| 6 | *(otherwise)* | (True, False)   // unreachable for well-formed modes |
 
 ```mermaid
 flowchart TD
@@ -489,7 +466,7 @@ flowchart TD
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 enforceAccess mode decision =
   if mode == AM_Off then (True, False)
    | mode == AM_Audit then
@@ -522,7 +499,7 @@ enforceAccess mode decision =
 
 </details>
 
-Constructs `[EnrollmentStatus](#enrollmentstatus)` from the given inputs.
+Constructs `EnrollmentStatus` from the given inputs.
 
 #### Related Properties
 - [P3 — Key Id Hidden Until Active](#p3--key-id-hidden-until-active)
@@ -530,7 +507,7 @@ Constructs `[EnrollmentStatus](#enrollmentstatus)` from the given inputs.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 getStatus fleetEnabled hasKey keyIsActive keyId =
   { fleetMode = if fleetEnabled then FM_Enabled else FM_Disabled
   , hasKey    = hasKey
@@ -571,7 +548,7 @@ one.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 canonNormalized n b =
     and [ (i >= n) ==> ((b @ i) == 0)
         | i <- ([0 .. FL - 1] : [FL][IW]) ]
@@ -613,7 +590,7 @@ usize field). The injectivity argument is identical for both widths.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 canonLenPrefixed nm m nb b = [nm] # m # [nb] # b
 ```
 
@@ -642,7 +619,7 @@ Compares computed and provided values over `f`, returning `True` on match.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 fieldNormalized f =
   (f.len <= (`FLs : [IW])) /\
   and [ (i >= f.len) ==> ((f.buf @ i) == 0)
@@ -674,7 +651,7 @@ Tests whether `r` is well-formed.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 requestNormalized r =
   fieldNormalized r.method /\
   fieldNormalized r.path /\
@@ -705,7 +682,7 @@ Length-prefix a [Field](#field) as [len-byte] # buf.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 lpField f = [f.len] # f.buf
 ```
 
@@ -734,7 +711,7 @@ elides auth headers regardless of their value.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 lpHeader h = if h.isAuth then zero
                          else (lpField h.name) # (lpField h.value)
 ```
@@ -766,7 +743,7 @@ Mirrors the production C++/Rust encoder shape.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 canonicalizeS r =
     lpField r.method
   # lpField r.body
@@ -801,7 +778,7 @@ check despite the signature being over old bytes.
 The implementation now binds the timestamp into the request: it is a
 field of `DeviceRequest`, is included in the canonical signed bytes by
 `canonicalizePayload`, and is the only value `handle_activate` passes
-to `[isValidRequestDate](#isvalidrequestdate)`. The Cryptol model below mirrors that: the
+to `isValidRequestDate`. The Cryptol model below mirrors that: the
 verifier extracts `r.timestamp` and the caller-supplied parameter (if
 any) is unused — a pure transport-layer artefact.
 
@@ -810,59 +787,11 @@ any) is unused — a pure transport-layer artefact.
 
 <details><summary>Formal definition (Cryptol)</summary>
 
-```cryptol
+```haskell
 verifierTimestamp_current r _ = r.timestamp
 ```
 
 </details>
-
-### Call Graph
-
-```mermaid
-graph LR
-  authenticate["authenticate"]
-  click authenticate "functions/authenticate.md" "authenticate"
-  canonLenPrefixed["canonLenPrefixed"]
-  click canonLenPrefixed "functions/canonLenPrefixed.md" "canonLenPrefixed"
-  canonNormalized["canonNormalized"]
-  click canonNormalized "functions/canonNormalized.md" "canonNormalized"
-  canonicalizeS["canonicalizeS"]
-  click canonicalizeS "functions/canonicalizeS.md" "canonicalizeS"
-  enforceAccess["enforceAccess"]:::decision
-  click enforceAccess "functions/enforceAccess.md" "enforceAccess"
-  enrollDevice["enrollDevice"]:::decision
-  click enrollDevice "functions/enrollDevice.md" "enrollDevice"
-  fieldNormalized["fieldNormalized"]
-  click fieldNormalized "functions/fieldNormalized.md" "fieldNormalized"
-  getStatus["getStatus"]
-  click getStatus "functions/getStatus.md" "getStatus"
-  hmacSha256["hmacSha256"]
-  click hmacSha256 "functions/hmacSha256.md" "hmacSha256"
-  isValidRequestDate["isValidRequestDate"]
-  click isValidRequestDate "functions/isValidRequestDate.md" "isValidRequestDate"
-  isValidSignature["isValidSignature"]
-  click isValidSignature "functions/isValidSignature.md" "isValidSignature"
-  lpField["lpField"]
-  click lpField "functions/lpField.md" "lpField"
-  lpHeader["lpHeader"]
-  click lpHeader "functions/lpHeader.md" "lpHeader"
-  provisionKey["provisionKey"]:::decision
-  click provisionKey "functions/provisionKey.md" "provisionKey"
-  requestNormalized["requestNormalized"]
-  click requestNormalized "functions/requestNormalized.md" "requestNormalized"
-  verifierTimestamp_current["verifierTimestamp_current"]
-  click verifierTimestamp_current "functions/verifierTimestamp_current.md" "verifierTimestamp_current"
-  canonicalizeS --> lpField
-  canonicalizeS --> lpHeader
-  isValidSignature --> hmacSha256
-  lpHeader --> lpField
-  requestNormalized --> fieldNormalized
-  classDef default fill:#f8fafc,stroke:#475569,stroke-width:1.5px,color:#0f172a
-  classDef decision fill:#ecfeff,stroke:#0e7490,stroke-width:1.5px,color:#164e63
-  classDef stub fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px,stroke-dasharray: 5 5,color:#7c2d12
-```
-
-**Key:** 🔵 function · 🟢 decision
 
 ## Key Lifecycle Safety
 
@@ -877,7 +806,7 @@ can never return Succeeded.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAuthResult authResult ==>
 keyAlreadyActive ==>
 enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
@@ -892,7 +821,7 @@ enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isKeyVaultResult vaultResult ==>
 fleetEnabled ==>
 validRequest ==>
@@ -909,7 +838,7 @@ provisionKey fleetEnabled validRequest vaultResult True
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (getStatus fleetEnabled hasKey False keyId).keyId == none
 ```
 
@@ -921,7 +850,7 @@ provisionKey fleetEnabled validRequest vaultResult True
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (getStatus fleetEnabled hasKey True keyId).keyId == some keyId
 ```
 
@@ -933,7 +862,7 @@ provisionKey fleetEnabled validRequest vaultResult True
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isKeyVaultResult vaultResult ==>
 isAuthResult authResult ==>
 isActivationResult activationResult ==>
@@ -952,7 +881,7 @@ isActivationResult activationResult ==>
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 authenticate False sigValid claimsValid == False
 ```
 
@@ -964,7 +893,7 @@ authenticate False sigValid claimsValid == False
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 authenticate dateValid False claimsValid == False
 ```
 
@@ -976,7 +905,7 @@ authenticate dateValid False claimsValid == False
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isValidSignature k r (hmacSha256 k r) == True
 ```
 
@@ -988,7 +917,7 @@ isValidSignature k r (hmacSha256 k r) == True
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (sig != hmacSha256 k r) ==> (isValidSignature k r sig == False)
 ```
 
@@ -1003,7 +932,7 @@ to the fleetEnabled case. The disabled case is covered by [P5](#p5--disabled-rej
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 fleetEnabled ==>
 isAuthResult authResult ==>
 isActivationResult activationResult ==>
@@ -1021,7 +950,7 @@ enrollDevice fleetEnabled False authResult activationResult
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAccessDecision decision ==>
 enforceAccess AM_Off decision == (True, False)
 ```
@@ -1034,7 +963,7 @@ enforceAccess AM_Off decision == (True, False)
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAccessDecision decision ==>
 (enforceAccess AM_Audit decision).0 == True
 ```
@@ -1047,7 +976,7 @@ isAccessDecision decision ==>
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 enforceAccess AM_Enforce AD_Deny == (False, True)
 ```
 
@@ -1059,7 +988,7 @@ enforceAccess AM_Enforce AD_Deny == (False, True)
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 enforceAccess AM_Enforce AD_Allow == (True, False)
 ```
 
@@ -1073,7 +1002,7 @@ enforceAccess AM_Enforce AD_Allow == (True, False)
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 provisionKey True True KV_Ok False == PR_Succeeded
 ```
 
@@ -1085,7 +1014,7 @@ provisionKey True True KV_Ok False == PR_Succeeded
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 enrollDevice True True AR_Authenticated AC_Success == ER_Succeeded
 ```
 
@@ -1097,7 +1026,7 @@ enrollDevice True True AR_Authenticated AC_Success == ER_Succeeded
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 // Avoid 64-bit overflow when constructing currentTime.
 (requestTs <= (~ zero) - window) ==>
 isValidRequestDate requestTs (requestTs + window) window == True
@@ -1111,7 +1040,7 @@ isValidRequestDate requestTs (requestTs + window) window == True
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (requestTs <= currentTime) ==>
 ((currentTime - requestTs) > window) ==>
 isValidRequestDate requestTs currentTime window == False
@@ -1127,7 +1056,7 @@ isValidRequestDate requestTs currentTime window == False
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isActivationResult activationResult ==>
 enrollDevice True True AR_VaultUnavailable activationResult
 == ER_InternalError
@@ -1141,7 +1070,7 @@ enrollDevice True True AR_VaultUnavailable activationResult
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isKeyVaultResult vaultResult ==>
 provisionKey True False vaultResult keyIsActive == PR_BadRequest
 ```
@@ -1154,7 +1083,7 @@ provisionKey True False vaultResult keyIsActive == PR_BadRequest
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAuthResult authResult ==>
 isActivationResult activationResult ==>
 enrollDevice True False authResult activationResult == ER_Unauthorized
@@ -1170,7 +1099,7 @@ InternalError when authentication succeeded.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isActivationResult activationResult ==>
 (activationResult != AC_Success) ==>
 (activationResult != AC_AlreadyActive) ==>
@@ -1189,7 +1118,7 @@ normalized requests produce distinct canonical byte streams.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 ( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
 (nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
 canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
@@ -1225,7 +1154,7 @@ normalized header records produce distinct canonical byte streams.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 ( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
 (nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
 canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
@@ -1245,7 +1174,7 @@ tag uniquely marks each record boundary.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 ( (nm1 <= (`FL : [IW])) /\ (nb1 <= (`FL : [IW])) /\
 (nm2 <= (`FL : [IW])) /\ (nb2 <= (`FL : [IW])) /\
 canonNormalized nm1 m1 /\ canonNormalized nb1 b1 /\
@@ -1268,7 +1197,7 @@ matrix, and [P12](#p12--audit-never-denies) only checks the `.0 = allowed` proje
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 enforceAccess AM_Enforce AD_NoRule == (True, False)
 ```
 
@@ -1282,7 +1211,7 @@ unspecified.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAccessDecision decision ==>
 (enforceAccess AM_Audit decision).1 == (decision == AD_Deny)
 ```
@@ -1301,7 +1230,7 @@ depend on itself.
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 ( requestNormalized r /\ fieldNormalized v1 /\ fieldNormalized v2 ) ==>
 canonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v1 } else h
 | h <- r.hdrs ] }
@@ -1322,7 +1251,7 @@ canonicalizeS { r | hdrs = [ if h.isAuth then { h | value = v2 } else h
 
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 verifierTimestamp_current r tsFromCaller == r.timestamp
 ```
 

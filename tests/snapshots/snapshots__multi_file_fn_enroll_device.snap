@@ -21,17 +21,21 @@ expression: content
 
 </details>
 
-Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `[EnrollmentResult](../types.md#enrollmentresult)`. Defaults to `[ER_Unauthorized](../types.md#enrollmentresult)` when no prior condition matches.
+### Formal definition (Cryptol)
 
-| # | Condition | Result |
-|---|-----------|--------|
-| 1 | ~ fleetEnabled | [ER_Disabled](../types.md#enrollmentresult) |
-| 2 | ~ validMetadata | [ER_Unauthorized](../types.md#enrollmentresult) |
-| 3 | authResult == [AR_Authenticated](../types.md#authresult) |  |
-| 4 | activationResult == [AC_AlreadyActive](../types.md#activationresult) | [ER_Unauthorized](../types.md#enrollmentresult) |
-| 5 | *(otherwise)* | [ER_InternalError](../types.md#enrollmentresult)) |
-| 6 | authResult == [AR_VaultUnavailable](../types.md#authresult) | [ER_InternalError](../types.md#enrollmentresult) |
-| 7 | *(otherwise)* | [ER_Unauthorized](../types.md#enrollmentresult) |
+```haskell
+enrollDevice fleetEnabled validMetadata authResult activationResult =
+  if ~ fleetEnabled                       then ER_Disabled
+   | ~ validMetadata                      then ER_Unauthorized
+   | authResult == AR_Authenticated       then
+        (if activationResult == AC_Success       then ER_Succeeded
+          | activationResult == AC_AlreadyActive then ER_Unauthorized
+         else                                         ER_InternalError)
+   | authResult == AR_VaultUnavailable    then ER_InternalError
+  else                                         ER_Unauthorized
+```
+
+Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `EnrollmentResult`. Defaults to `ER_Unauthorized` when no prior condition matches.
 
 ```mermaid
 flowchart TD
@@ -59,19 +63,3 @@ flowchart TD
 - [P19 — Vault Unavailable Is Internal](../properties/error-handling.md#p19--vault-unavailable-is-internal)
 - [P21 — Activate Without Metadata Unauthorized](../properties/error-handling.md#p21--activate-without-metadata-unauthorized)
 - [P22 — Activation Io Failure Is Internal](../properties/error-handling.md#p22--activation-io-failure-is-internal)
-
-<details><summary>Formal definition (Cryptol)</summary>
-
-```cryptol
-enrollDevice fleetEnabled validMetadata authResult activationResult =
-  if ~ fleetEnabled                       then ER_Disabled
-   | ~ validMetadata                      then ER_Unauthorized
-   | authResult == AR_Authenticated       then
-        (if activationResult == AC_Success       then ER_Succeeded
-          | activationResult == AC_AlreadyActive then ER_Unauthorized
-         else                                         ER_InternalError)
-   | authResult == AR_VaultUnavailable    then ER_InternalError
-  else                                         ER_Unauthorized
-```
-
-</details>

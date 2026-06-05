@@ -4,6 +4,8 @@ expression: content
 ---
 # Key Lifecycle Safety
 
+> **How to read these verdicts.** A property's ✓ means a solver discharged the logical claim against the **Cryptol model**. That guarantee carries over to the compiled implementation only when every function the property mentions *also* has a SAW equivalence proof — surfaced below each property as an **Implementation equivalence** callout. A green property over a partly-proven function set still tells you the design is sound; it does **not** by itself certify the binary.
+
 ### P1 — Key Monotonicity
 
 P1: Key Monotonicity. Once a key is active, any subsequent activation
@@ -13,11 +15,9 @@ states this as an invariant on activationResult, which we express as:
 for any inputs, if the system reports the key is active then [enrollDevice](../functions/enrollDevice.md)
 can never return Succeeded.
 
-**Involved:** [`AC_AlreadyActive`](../types.md#activationresult), [`ER_Succeeded`](../types.md#enrollmentresult), [`enrollDevice`](../functions/enrollDevice.md)
-
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isAuthResult authResult ==>
 keyAlreadyActive ==>
 enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
@@ -26,15 +26,15 @@ enrollDevice fleetEnabled validMetadata authResult AC_AlreadyActive
 
 </details>
 
+**Involved:** [`AC_AlreadyActive`](../types.md#activationresult), [`ER_Succeeded`](../types.md#enrollmentresult), [`enrollDevice`](../functions/enrollDevice.md)
+
 ### P2 — Active Prevents Provisioning
 
 P2: Active prevents provisioning.
 
-**Involved:** [`KV_Ok`](../types.md#keyvaultresult), [`PR_Unauthorized`](../types.md#provisionresult), [`provisionKey`](../functions/provisionKey.md)
-
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isKeyVaultResult vaultResult ==>
 fleetEnabled ==>
 validRequest ==>
@@ -45,43 +45,43 @@ provisionKey fleetEnabled validRequest vaultResult True
 
 </details>
 
+**Involved:** [`KV_Ok`](../types.md#keyvaultresult), [`PR_Unauthorized`](../types.md#provisionresult), [`provisionKey`](../functions/provisionKey.md)
+
 ### P3 — Key Id Hidden Until Active
 
 P3: Key ID hidden until active.
 
-**Involved:** [`getStatus`](../functions/getStatus.md)
-
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (getStatus fleetEnabled hasKey False keyId).keyId == none
 ```
 
 </details>
 
+**Involved:** [`getStatus`](../functions/getStatus.md)
+
 ### P4 — Key Id Revealed When Active
 
 P4: Key ID revealed when active.
 
-**Involved:** [`getStatus`](../functions/getStatus.md)
-
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 (getStatus fleetEnabled hasKey True keyId).keyId == some keyId
 ```
 
 </details>
 
+**Involved:** [`getStatus`](../functions/getStatus.md)
+
 ### P5 — Disabled Rejects All
 
 P5: Disabled rejects all.
 
-**Involved:** [`ER_Disabled`](../types.md#enrollmentresult), [`PR_Disabled`](../types.md#provisionresult), [`enrollDevice`](../functions/enrollDevice.md), [`provisionKey`](../functions/provisionKey.md)
-
 <details><summary>Formal property (Cryptol)</summary>
 
-```cryptol
+```haskell
 isKeyVaultResult vaultResult ==>
 isAuthResult authResult ==>
 isActivationResult activationResult ==>
@@ -91,3 +91,5 @@ isActivationResult activationResult ==>
 ```
 
 </details>
+
+**Involved:** [`ER_Disabled`](../types.md#enrollmentresult), [`PR_Disabled`](../types.md#provisionresult), [`enrollDevice`](../functions/enrollDevice.md), [`provisionKey`](../functions/provisionKey.md)
