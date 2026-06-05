@@ -6,7 +6,11 @@ use crate::ir::Item;
 use crate::parser::parse;
 
 fn load_items() -> Vec<Item> {
-    let src = fs::read_to_string("examples/SDEP.cry").expect("SDEP.cry not found");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("SDEP.cry");
+    let src = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("SDEP.cry not found at {}: {e}", path.display()));
     parse(&src)
 }
 

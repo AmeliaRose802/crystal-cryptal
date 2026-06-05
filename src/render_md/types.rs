@@ -138,7 +138,11 @@ mod tests {
     use super::*;
 
     fn load_items() -> Vec<Item> {
-        let src = std::fs::read_to_string("examples/SDEP.cry").expect("SDEP.cry not found");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("SDEP.cry");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("SDEP.cry not found at {}: {e}", path.display()));
         crate::parser::parse(&src)
     }
 
