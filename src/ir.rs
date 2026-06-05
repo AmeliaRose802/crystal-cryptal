@@ -216,15 +216,16 @@ impl From<ManifestEntry> for ProofStatus {
 /// ```
 /// and a flat fallback (no `overall` key) for hand-authored manifests that
 /// use the same shape as property entries.
+///
+/// The optional `by_language` breakdown is accepted by the JSON schema but
+/// not surfaced through this loader — serde silently ignores it (we never
+/// store it on the resulting [`ProofManifest`]). Add it back to the
+/// `Nested` variant if you need to expose the per-language detail later.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum FunctionManifestEntry {
-    /// Nested format: `overall` + optional `by_language`.
-    Nested {
-        overall: ManifestEntry,
-        #[serde(default)]
-        by_language: HashMap<String, ManifestEntry>,
-    },
+    /// Nested format: `overall` (plus an ignored `by_language`).
+    Nested { overall: ManifestEntry },
     /// Flat fallback: the entry is a `ManifestEntry` directly (no nesting).
     Flat(ManifestEntry),
 }
@@ -232,7 +233,7 @@ enum FunctionManifestEntry {
 impl FunctionManifestEntry {
     fn into_overall(self) -> ManifestEntry {
         match self {
-            FunctionManifestEntry::Nested { overall, .. } => overall,
+            FunctionManifestEntry::Nested { overall } => overall,
             FunctionManifestEntry::Flat(entry) => entry,
         }
     }

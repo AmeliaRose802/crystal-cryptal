@@ -1087,11 +1087,11 @@ fn render_function_files(
             // Branches: render flowchart only. The decision table
             // duplicated the same information one scroll above the
             // diagram, so per UX feedback we keep just the chart.
-            if branches.len() > 1 {
-                if let Some(chart) = render_flowchart_mermaid(name, branches) {
-                    out.push_str(&chart);
-                    out.push('\n');
-                }
+            if branches.len() > 1
+                && let Some(chart) = render_flowchart_mermaid(name, branches)
+            {
+                out.push_str(&chart);
+                out.push('\n');
             }
             // Single-branch result is shown only inside the formal definition accordion
 
@@ -1619,7 +1619,7 @@ fn find_involved_symbols(
 
     // Sort by name length descending to match longer names first
     let mut syms: Vec<(&String, &(String, String))> = symbols.symbols.iter().collect();
-    syms.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    syms.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
 
     for (name, (target_file, anchor)) in &syms {
         // Skip self-references and property labels (P1, P2, etc.)
@@ -1900,7 +1900,7 @@ fn find_involved_function_names(
     // Sort by length descending so the longer-name-first rule of
     // `find_involved_symbols` is preserved (avoids spurious sub-string hits).
     let mut keys: Vec<&str> = fn_status.keys().copied().collect();
-    keys.sort_by(|a, b| b.len().cmp(&a.len()));
+    keys.sort_by_key(|name| std::cmp::Reverse(name.len()));
     for name in keys {
         if contains_word(&all_text, name) && seen.insert(name.to_string()) {
             names.push(name.to_string());

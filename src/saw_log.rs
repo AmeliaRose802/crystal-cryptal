@@ -63,13 +63,13 @@ pub fn parse_saw_log(text: &str) -> Vec<SawLogRecord> {
 /// Strip an optional `[HH:MM:SS.mmm]` or `[HH:MM:SS]` timestamp prefix.
 pub fn strip_timestamp(line: &str) -> &str {
     let line = line.trim_start();
-    if line.starts_with('[') {
-        if let Some(end) = line.find(']') {
-            let bracket = &line[1..end];
-            // Only strip if it looks like a time/date (contains ':' or only non-alpha chars)
-            if bracket.contains(':') || bracket.chars().all(|c| !c.is_alphabetic()) {
-                return line[end + 1..].trim_start();
-            }
+    if line.starts_with('[')
+        && let Some(end) = line.find(']')
+    {
+        let bracket = &line[1..end];
+        // Only strip if it looks like a time/date (contains ':' or only non-alpha chars)
+        if bracket.contains(':') || bracket.chars().all(|c| !c.is_alphabetic()) {
+            return line[end + 1..].trim_start();
         }
     }
     line
@@ -78,16 +78,11 @@ pub fn strip_timestamp(line: &str) -> &str {
 /// Try to parse a verdict from a line.
 pub fn try_parse_verdict(line: &str) -> Option<ProofStatus> {
     let trimmed = line.trim();
-    if trimmed == "Q.E.D." || trimmed.starts_with("Q.E.D.") {
-        Some(ProofStatus::Proven {
-            solver: "saw".to_string(),
-            time_secs: None,
-            overrides: Vec::new(),
-            iterations: None,
-            verify_command: None,
-            verify_script: None,
-        })
-    } else if trimmed == "Valid" || trimmed == "Valid." {
+    if trimmed == "Q.E.D."
+        || trimmed.starts_with("Q.E.D.")
+        || trimmed == "Valid"
+        || trimmed == "Valid."
+    {
         Some(ProofStatus::Proven {
             solver: "saw".to_string(),
             time_secs: None,

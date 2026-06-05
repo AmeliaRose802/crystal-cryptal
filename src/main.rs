@@ -761,13 +761,13 @@ fn run_saw_log_adapter(log_path: &Path, output: &Path) {
         "functions": existing_functions,
     });
 
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("error: cannot create {}: {e}", parent.display());
-                std::process::exit(2);
-            });
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+            eprintln!("error: cannot create {}: {e}", parent.display());
+            std::process::exit(2);
+        });
     }
     let serialized = serde_json::to_string_pretty(&manifest).unwrap_or_else(|e| {
         eprintln!("error: failed to serialize manifest: {e}");
@@ -1071,10 +1071,10 @@ fn run_adapt_saw_results(dir: &Path, output: &Path) {
         entry.insert("overall".into(), proof_status_to_json(&proof_status));
         if let Some(lang) = value.get("impl_lang").and_then(|v| v.as_str()) {
             let mut lang_entry = proof_status_to_json(&proof_status);
-            if let Some(obj) = lang_entry.as_object_mut() {
-                if let Some(f) = value.get("impl_file").and_then(|v| v.as_str()) {
-                    obj.insert("impl_file".into(), serde_json::json!(f));
-                }
+            if let Some(obj) = lang_entry.as_object_mut()
+                && let Some(f) = value.get("impl_file").and_then(|v| v.as_str())
+            {
+                obj.insert("impl_file".into(), serde_json::json!(f));
             }
             entry.insert(
                 "by_language".into(),
@@ -1189,13 +1189,13 @@ fn run_emit_function_list(modules: &[ModuleBundle], output: &Path, include_priva
     if output == Path::new("./output") {
         println!("{json}");
     } else {
-        if let Some(parent) = output.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                    eprintln!("error: cannot create {}: {e}", parent.display());
-                    std::process::exit(2);
-                });
-            }
+        if let Some(parent) = output.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                eprintln!("error: cannot create {}: {e}", parent.display());
+                std::process::exit(2);
+            });
         }
         std::fs::write(output, format!("{json}\n")).unwrap_or_else(|e| {
             eprintln!("error: cannot write {}: {e}", output.display());
@@ -1235,13 +1235,13 @@ fn is_simple_constructor_by_name(name: &str) -> bool {
 }
 
 fn write_manifest_file(manifest: &serde_json::Value, output: &Path) {
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("error: cannot create {}: {e}", parent.display());
-                std::process::exit(2);
-            });
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+            eprintln!("error: cannot create {}: {e}", parent.display());
+            std::process::exit(2);
+        });
     }
     let serialized = serde_json::to_string_pretty(manifest).unwrap_or_else(|e| {
         eprintln!("error: failed to serialize manifest: {e}");

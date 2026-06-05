@@ -26,6 +26,17 @@ pub enum DeclKind {
     Parameter,
 }
 
+/// A classified declaration span: `(kind, start_byte, end_byte)` over the
+/// original source. Defined as a type alias so the LALRPOP grammar (which
+/// stringifies its return types into the generated parser) avoids the
+/// `clippy::type_complexity` lint on the auto-generated action functions.
+pub type DeclSpan = (DeclKind, usize, usize);
+
+/// The grammar's top-level return: optional module name plus the list of
+/// classified declaration spans. Aliased for the same reason as
+/// [`DeclSpan`].
+pub type ProgramReturn = (Option<String>, Vec<DeclSpan>);
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 pub fn parse(source: &str) -> Vec<Item> {
@@ -49,7 +60,7 @@ pub fn parse(source: &str) -> Vec<Item> {
         // that appears before any declaration.
         let mod_doc_lines: Vec<String> = block_docs
             .iter()
-            .filter(|d| first_decl_start.map_or(true, |fds| d.byte_pos < fds))
+            .filter(|d| first_decl_start.is_none_or(|fds| d.byte_pos < fds))
             .flat_map(|d| clean_doc_lines(&d.content))
             .collect();
 
@@ -67,7 +78,7 @@ pub fn parse(source: &str) -> Vec<Item> {
     // and any that appear before the first declaration (already used as module doc).
     for doc in &block_docs {
         // Skip module-level docs (before first declaration)
-        if first_decl_start.map_or(true, |fds| doc.byte_pos < fds) {
+        if first_decl_start.is_none_or(|fds| doc.byte_pos < fds) {
             continue;
         }
         let inside_decl = decls
@@ -427,8 +438,8 @@ fn parse_sig_or_bind(text: &str, items: &mut Vec<Item>) {
             }
         }
         // Mark all Function/Property items added within this private block.
-        for i in private_start..items.len() {
-            match &mut items[i] {
+        for item in items.iter_mut().skip(private_start) {
+            match item {
                 Item::Function { is_private, .. } => *is_private = true,
                 Item::Property { is_private, .. } => *is_private = true,
                 _ => {}
@@ -607,10 +618,10 @@ fn find_top_level(text: &str, target: char) -> Option<usize> {
 
 fn first_ident(text: &str) -> String {
     let text = text.trim();
-    if text.starts_with('(') {
-        if let Some(close) = text.find(')') {
-            return text[1..close].trim().to_string();
-        }
+    if text.starts_with('(')
+        && let Some(close) = text.find(')')
+    {
+        return text[1..close].trim().to_string();
     }
     text.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '\'')
         .next()
@@ -748,27 +759,27 @@ fn split_doc_and_decl(text: &str) -> (Option<String>, &str) {
 
 fn extract_width(rhs: &str) -> String {
     let text = rhs.trim();
-    if text.starts_with('[') {
-        if let Some(close) = text.find(']') {
-            return text[1..close].trim().to_string();
-        }
+    if text.starts_with('[')
+        && let Some(close) = text.find(']')
+    {
+        return text[1..close].trim().to_string();
     }
     text.to_string()
 }
 
 fn extract_record_fields(text: &str) -> Vec<(String, String)> {
     let mut fields = Vec::new();
-    if let Some(open) = text.find('{') {
-        if let Some(close) = text.rfind('}') {
-            let inner = &text[open + 1..close];
-            for field_str in inner.split(',') {
-                let field_str = field_str.trim();
-                if let Some(colon_pos) = field_str.find(':') {
-                    let name = field_str[..colon_pos].trim().to_string();
-                    let typ = field_str[colon_pos + 1..].trim().to_string();
-                    if !name.is_empty() {
-                        fields.push((name, typ));
-                    }
+    if let Some(open) = text.find('{')
+        && let Some(close) = text.rfind('}')
+    {
+        let inner = &text[open + 1..close];
+        for field_str in inner.split(',') {
+            let field_str = field_str.trim();
+            if let Some(colon_pos) = field_str.find(':') {
+                let name = field_str[..colon_pos].trim().to_string();
+                let typ = field_str[colon_pos + 1..].trim().to_string();
+                if !name.is_empty() {
+                    fields.push((name, typ));
                 }
             }
         }
@@ -857,26 +868,27 @@ fn find_word(s: &str, word: &str) -> Option<usize> {
 fn merge_signatures(items: &mut Vec<Item>) {
     let mut i = 0;
     while i < items.len() {
-        if let Item::Function { name, body, .. } = &items[i] {
-            if !body.is_empty() {
-                let fn_name = name.clone();
-                let fn_body = body.clone();
-                for j in (0..i).rev() {
-                    if let Item::Function {
-                        name: sig_name,
-                        body: sig_body,
-                        branches: sig_branches,
-                        signature: sig,
-                        ..
-                    } = &mut items[j]
-                    {
-                        if *sig_name == fn_name && sig_body.is_empty() && !sig.is_empty() {
-                            *sig_body = fn_body.clone();
-                            *sig_branches = extract_branches(&fn_body);
-                            items.remove(i);
-                            break;
-                        }
-                    }
+        if let Item::Function { name, body, .. } = &items[i]
+            && !body.is_empty()
+        {
+            let fn_name = name.clone();
+            let fn_body = body.clone();
+            for j in (0..i).rev() {
+                if let Item::Function {
+                    name: sig_name,
+                    body: sig_body,
+                    branches: sig_branches,
+                    signature: sig,
+                    ..
+                } = &mut items[j]
+                    && *sig_name == fn_name
+                    && sig_body.is_empty()
+                    && !sig.is_empty()
+                {
+                    *sig_body = fn_body.clone();
+                    *sig_branches = extract_branches(&fn_body);
+                    items.remove(i);
+                    break;
                 }
             }
         }
@@ -983,11 +995,11 @@ fn group_enums(items: &mut Vec<Item>) {
             if !variants.is_empty() {
                 if predicate.is_none() {
                     for item in items.iter().skip(j) {
-                        if let Item::Function { name: fn_name, .. } = item {
-                            if *fn_name == format!("is{}", type_name) {
-                                predicate = Some(fn_name.clone());
-                                break;
-                            }
+                        if let Item::Function { name: fn_name, .. } = item
+                            && *fn_name == format!("is{}", type_name)
+                        {
+                            predicate = Some(fn_name.clone());
+                            break;
                         }
                     }
                 }
@@ -1044,7 +1056,7 @@ fn group_enums(items: &mut Vec<Item>) {
 
 fn body_has_type_annotation(body: &str, type_name: &str) -> bool {
     body.split(':')
-        .last()
+        .next_back()
         .is_some_and(|after_colon| {
             let cleaned = after_colon.trim();
             // Strip trailing inline comments
@@ -1088,10 +1100,10 @@ fn attach_docs(items: &mut Vec<Item>) {
         if let (Item::CommentBlock { .. }, Item::CommentBlock { .. }) =
             (&items[i], &items[i + 1])
         {
-            if let Item::CommentBlock { lines: next_lines } = items.remove(i + 1) {
-                if let Item::CommentBlock { lines } = &mut items[i] {
-                    lines.extend(next_lines);
-                }
+            if let Item::CommentBlock { lines: next_lines } = items.remove(i + 1)
+                && let Item::CommentBlock { lines } = &mut items[i]
+            {
+                lines.extend(next_lines);
             }
             // Don't increment — check if more follow
         } else {
@@ -1151,23 +1163,22 @@ fn extract_sections_with_offsets(source: &str) -> Vec<(usize, Item)> {
     while i < lines.len() {
         let line = lines[i].trim();
 
-        if is_separator_line(line) {
-            if i + 2 < lines.len()
-                && is_comment_line(lines[i + 1])
-                && is_separator_line(lines[i + 2].trim())
-            {
-                let title = strip_comment_prefix(lines[i + 1]).trim().to_string();
-                result.push((
-                    line_offsets[i],
-                    Item::Section {
-                        level: 2,
-                        title,
-                        doc: Vec::new(),
-                    },
-                ));
-                i += 3;
-                continue;
-            }
+        if is_separator_line(line)
+            && i + 2 < lines.len()
+            && is_comment_line(lines[i + 1])
+            && is_separator_line(lines[i + 2].trim())
+        {
+            let title = strip_comment_prefix(lines[i + 1]).trim().to_string();
+            result.push((
+                line_offsets[i],
+                Item::Section {
+                    level: 2,
+                    title,
+                    doc: Vec::new(),
+                },
+            ));
+            i += 3;
+            continue;
         }
 
         if is_comment_line(line) && is_category_line(line) {

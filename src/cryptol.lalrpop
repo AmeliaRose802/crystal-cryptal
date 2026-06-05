@@ -9,13 +9,13 @@
 // extracts names, signatures, and bodies from the classified spans.
 
 use crate::lexer::Tok;
-use crate::parser::DeclKind;
+use crate::parser::{DeclKind, DeclSpan, ProgramReturn};
 
 grammar<'input>(source: &'input str);
 
-// ── Entry point ─────────────────────────────────────────────────────────────
+// ── Entry point ────────────────────────────────────────────────────────────
 
-pub Program: (Option<String>, Vec<(DeclKind, usize, usize)>) = {
+pub Program: ProgramReturn = {
     MbDocs "module" <n:ModName> "where" "v{" <ds:Decls> "v}" =>
         (Some(n), ds),
     "v{" <ds:Decls> "v}" =>
@@ -40,12 +40,12 @@ ModName: String = {
 
 // ── Declaration list ────────────────────────────────────────────────────────
 
-Decls: Vec<(DeclKind, usize, usize)> = {
+Decls: Vec<DeclSpan> = {
     => Vec::new(),
     <mut v:Decls> <d:OneDecl> => { if let Some(d) = d { v.push(d); } v },
 };
 
-OneDecl: Option<(DeclKind, usize, usize)> = {
+OneDecl: Option<DeclSpan> = {
     // ── Classified declarations ──
     <l:@L> Docs "type"       Tail <r:@R> Sep => Some((DeclKind::Type, l, r)),
     <l:@L> Docs "property"   Tail <r:@R> Sep => Some((DeclKind::Property, l, r)),

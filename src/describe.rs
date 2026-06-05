@@ -239,14 +239,14 @@ fn describe_decision_table(
     );
 
     // Add hint about the default branch if present.
-    if let Some(last) = branches.last() {
-        if last.condition.is_none() {
-            // Strip trailing Cryptol comments from the result text.
-            let result = strip_inline_comment(&last.result);
-            desc.push_str(&format!(
-                " Defaults to `{result}` when no prior condition matches.",
-            ));
-        }
+    if let Some(last) = branches.last()
+        && last.condition.is_none()
+    {
+        // Strip trailing Cryptol comments from the result text.
+        let result = strip_inline_comment(&last.result);
+        desc.push_str(&format!(
+            " Defaults to `{result}` when no prior condition matches.",
+        ));
     }
 
     vec![desc]
@@ -352,31 +352,29 @@ pub fn humanize_cryptol_type(ty: &str) -> Option<String> {
     }
 
     // [N][8] → "N bytes"
-    if let Some(rest) = ty.strip_prefix('[') {
-        if let Some((inner, after)) = rest.split_once(']') {
-            let inner = inner.trim();
-            let after = after.trim();
-            if after == "[8]" {
-                if inner.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(format!("{inner} bytes"));
-                } else {
-                    return Some(format!("{inner} bytes"));
-                }
+    if let Some(rest) = ty.strip_prefix('[')
+        && let Some((inner, after)) = rest.split_once(']')
+    {
+        let inner = inner.trim();
+        let after = after.trim();
+        if after == "[8]" {
+            // Whether `inner` is a literal digit string or a type variable,
+            // we render the same "<inner> bytes" phrase.
+            return Some(format!("{inner} bytes"));
+        }
+        if after.is_empty() {
+            if inner.chars().all(|c| c.is_ascii_digit()) {
+                return Some(format!("{inner} bits"));
+            } else {
+                return Some(format!("a sequence of {inner} bits"));
             }
-            if after.is_empty() {
-                if inner.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(format!("{inner} bits"));
-                } else {
-                    return Some(format!("a sequence of {inner} bits"));
-                }
-            }
-            // [N][M] for other M
-            if let Some(rest2) = after.strip_prefix('[') {
-                if let Some(m) = rest2.strip_suffix(']') {
-                    let m = m.trim();
-                    return Some(format!("a sequence of {inner} values, each {m} bits wide"));
-                }
-            }
+        }
+        // [N][M] for other M
+        if let Some(rest2) = after.strip_prefix('[')
+            && let Some(m) = rest2.strip_suffix(']')
+        {
+            let m = m.trim();
+            return Some(format!("a sequence of {inner} values, each {m} bits wide"));
         }
     }
 

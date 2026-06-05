@@ -709,10 +709,10 @@ fn apply_layout(tokens: Vec<PosToken>) -> Vec<(usize, Tok, usize)> {
                 }
             }
             // Insert VSemi if at same level
-            if let Some(&ctx) = layout_stack.last() {
-                if col == ctx {
-                    result.push((prev_end, Tok::VSemi, prev_end));
-                }
+            if let Some(&ctx) = layout_stack.last()
+                && col == ctx
+            {
+                result.push((prev_end, Tok::VSemi, prev_end));
             }
         }
 
@@ -748,9 +748,18 @@ fn apply_layout(tokens: Vec<PosToken>) -> Vec<(usize, Tok, usize)> {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+/// A LALR-style spanned token: `(start_byte, token, end_byte)`. Aliased so
+/// downstream signatures (and the LALRPOP-generated parser) stay below the
+/// `clippy::type_complexity` threshold.
+pub type SpannedTok = (usize, Tok, usize);
+
+/// Output of [`lex`]: the spanned-token stream plus the extracted block
+/// doc comments.
+pub type LexOutput = (Vec<SpannedTok>, Vec<DocComment>);
+
 /// Lex a Cryptol source string into a token stream suitable for lalrpop.
 /// Returns (start_byte, token, end_byte) triples and extracted block doc comments.
-pub fn lex(source: &str) -> Result<(Vec<(usize, Tok, usize)>, Vec<DocComment>), LexError> {
+pub fn lex(source: &str) -> Result<LexOutput, LexError> {
     // 1. Strip block comments (preserve positions)
     let (cleaned, block_docs) = strip_block_comments(source);
 
