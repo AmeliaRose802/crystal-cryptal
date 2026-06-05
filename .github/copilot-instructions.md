@@ -32,3 +32,34 @@ When a file approaches ~400 lines, split it before adding more:
 - After splitting, delete the old monolithic file (`Remove-Item src\foo.rs`) and run `cargo build` then `cargo test` to confirm.
 
 Examples of this layout already in the tree: `src/render_md/`, `src/parser/`, `src/lexer/`, `src/linker/`, `src/cli/`, `src/ir/`.
+
+
+## Formatting & lint validation
+
+Before committing or pushing any Rust change, run **both**:
+
+```pwsh
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+CI runs the equivalent jobs (`format` and `clippy`) on both Linux and Windows
+and will fail the build on any diff or warning. `-D warnings` is mandatory —
+every clippy lint is treated as an error, so don't leave warnings in place
+"for later". Fix them or, if a lint is genuinely wrong for the situation,
+add a narrowly-scoped `#[allow(clippy::lint_name)]` with a comment explaining
+why.
+
+Also run `cargo test --all` before pushing; the `test` job runs on both
+Linux and Windows in CI and a single failure on either OS blocks merge.
+
+Common clippy fixes seen in this repo:
+
+- `collapsible_if` — merge `if let Some(x) = … { if cond { … } }` into
+  `if let Some(x) = … && cond { … }` using let-chains (Rust 2024 edition).
+- `unused_imports` — delete unused items from `use` lists; don't `#[allow]`
+  them.
+
+Do not push code that hasn't been formatted and clippy-clean locally — the
+CI round-trip is slow and the Windows leg in particular catches regressions
+that `cargo check` on Linux misses.
