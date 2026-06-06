@@ -1,0 +1,61 @@
+---
+source: tests/snapshots.rs
+expression: md
+---
+# Coverage Matrix
+
+> **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by one of five badges. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
+
+## Summary
+
+| Badge | Meaning | Count |
+|-------|---------|-------|
+| ✅ | Proven | 0 |
+| 🔲 | Proven (bounded) | 0 |
+| 🧩 | Model abstraction | 3 |
+| ⚠️ | Implemented, unverified | 20 |
+| 📄 | Spec-only | 0 |
+| | **Total** | **23** |
+
+> ⚠️ **20 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
+
+## ⚠️ Implemented, unverified
+
+Real production functions with no proof. This is the gap.
+
+| Function | Source | Maps to | Notes |
+|----------|--------|---------|-------|
+| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — |
+| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — |
+| `canonicalizePayload` | impl (cpp) | `canonicalize_lp` *(bounded model only)* | `cpp/src/canonical.cpp` |
+| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — |
+| `canonicalize_lp` | impl (cpp) | `canonLenPrefixed` *(bounded model only)* | `cpp/src/canonical.cpp` |
+| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — |
+| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — |
+| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — |
+| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — |
+| `handle_provision` | impl (cpp) | composes `provisionKey` | `cpp/src/controller.cpp` |
+| `hmac_sha256` | impl (cpp) | `hmacSha256` | `cpp/src/hmac.cpp` |
+| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — |
+| [`lpField`](functions/lpField.md) | model (SDEP) | — | — |
+| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — |
+| [`none`](functions/none.md) | model (SDEP) | — | — |
+| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) | — | `cpp/src/decisions.cpp` |
+| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — |
+| `sha256` | impl (cpp) | — | `cpp/src/sha256.cpp` |
+| [`some`](functions/some.md) | model (SDEP) | — | — |
+| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — |
+
+## 🧩 Model abstraction
+
+Cryptol definitions with no real-code counterpart (placeholders, uninterpreted functions, ABI adapters). The notes column explains what each one stands in for.
+
+| Function | Source | Maps to | Notes |
+|----------|--------|---------|-------|
+| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model (SDEP) | — | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+| [`hmacSha256`](functions/hmacSha256.md) | model (SDEP) | — | Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | Constant-time comparison contract; the production constant-time-equals helper is unverified. |
+
+## Excluded helpers
+
+2 functions excluded from the matrix via `coverage.toml [exclude].functions` (not security-relevant): `to_lower`, `trim`.

@@ -2,6 +2,7 @@
 
 use std::fmt::Write as FmtWrite;
 
+use crate::coverage::{function_banner, function_title_badge};
 use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::Item;
 use crate::linker::SymbolTable;
@@ -139,7 +140,7 @@ pub fn render_single_file(
                 is_private,
             } = item
             {
-                let badge = proof_badge(proof_status);
+                let badge = function_title_badge(options.ledger.as_ref(), name, proof_status);
                 let private_badge = if *is_private { "`internal helper`" } else { "" };
                 let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
                     (false, false) => format!("  {badge}  {private_badge}"),
@@ -148,6 +149,10 @@ pub fn render_single_file(
                     (true, true) => String::new(),
                 };
                 let _ = writeln!(out, "### `{name}`{badge_str}\n");
+
+                if let Some(banner) = function_banner(options.ledger.as_ref(), name) {
+                    out.push_str(&banner);
+                }
 
                 let parsed_sig = parse_signature(signature);
                 let param_names = extract_param_names(body, name);
@@ -375,6 +380,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(doc.contains("# SDEP"), "should contain module title");
@@ -401,6 +407,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(
@@ -429,6 +436,7 @@ mod tests {
             no_details: true,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(

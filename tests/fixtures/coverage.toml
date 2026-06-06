@@ -1,0 +1,19 @@
+# Coverage configuration for the SDEP fixture used by the snapshot tests.
+# See `01-coverage-clarity.md` and `02-coverage-ledger.md` for what each
+# section means.
+
+[exclude]
+# Trivial string helpers — present in the inventory but not security-
+# relevant. Counted as a footnote on the matrix, not as gaps.
+functions = ["to_lower", "trim"]
+
+[abstraction]
+# Cryptol definitions with no real implementation counterpart. Each entry
+# is shown as a 🧩 banner on its function page.
+hmacSha256       = "Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified."
+isValidSignature = "Constant-time comparison contract; the production constant-time-equals helper is unverified."
+canonLenPrefixed = "Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified."
+
+[spec_only]
+# Lives in the model on purpose (gap-exhibiting reference functions).
+functions = []

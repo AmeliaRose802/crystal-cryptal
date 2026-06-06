@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::coverage::{function_banner, function_title_badge};
 use crate::describe::auto_describe_function;
 use crate::ir::Item;
 use crate::linker::SymbolTable;
@@ -12,7 +13,7 @@ use crate::linker::SymbolTable;
 use super::RenderOptions;
 use super::mermaid::render_flowchart_mermaid;
 use super::proof::{
-    proof_badge, proof_detail_line, render_failure_details_callout, render_proof_details_callout,
+    proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
@@ -48,7 +49,7 @@ pub(super) fn render_function_files(
             let current_file = prefixed_file(path_prefix, &format!("functions/{name}.md"));
             let mut out = String::new();
 
-            let badge = proof_badge(proof_status);
+            let badge = function_title_badge(options.ledger.as_ref(), name, proof_status);
             let private_badge = if *is_private { "`internal helper`" } else { "" };
             let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
                 (false, false) => format!("  {badge}  {private_badge}"),
@@ -57,6 +58,10 @@ pub(super) fn render_function_files(
                 (true, true) => String::new(),
             };
             let _ = writeln!(out, "# `{name}`{badge_str}\n");
+
+            if let Some(banner) = function_banner(options.ledger.as_ref(), name) {
+                out.push_str(&banner);
+            }
 
             let parsed_sig = parse_signature(signature);
             let param_names = extract_param_names(body, name);

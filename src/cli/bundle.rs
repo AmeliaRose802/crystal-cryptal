@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
 
+use pretty_specs::coverage::{CoverageBadge, Ledger};
 use pretty_specs::ir::Item;
 use serde::Serialize;
 
@@ -134,9 +135,30 @@ pub(crate) fn topological_module_order(modules: &[ModuleBundle]) -> Result<Vec<u
     Ok(order)
 }
 
-pub(crate) fn render_multi_module_index(modules: &[ModuleBundle]) -> String {
+pub(crate) fn render_multi_module_index(
+    modules: &[ModuleBundle],
+    ledger: Option<&Ledger>,
+) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# Specification Modules\n");
+
+    if let Some(l) = ledger {
+        let proven = l.count(CoverageBadge::Proven);
+        let bounded = l.count(CoverageBadge::ProvenBounded);
+        let abs = l.count(CoverageBadge::ModelAbstraction);
+        let unv = l.count(CoverageBadge::Unverified);
+        let spec = l.count(CoverageBadge::SpecOnly);
+        let _ = writeln!(out, "## Coverage at a glance\n");
+        let _ = writeln!(
+            out,
+            "✅ {proven} proven · 🔲 {bounded} bounded · 🧩 {abs} abstractions · ⚠️ {unv} **unverified** · 📄 {spec} spec-only\n"
+        );
+        let _ = writeln!(
+            out,
+            "Full breakdown: [Coverage Matrix](coverage.md). Real functions \
+             that lack a proof are listed by default — silence is impossible.\n"
+        );
+    }
 
     let _ = writeln!(out, "## Modules\n");
     let _ = writeln!(out, "| Module | Types | Functions | Properties |");

@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::Path;
 
+use pretty_specs::coverage::{
+    build_ledger, load_coverage_config, load_inventory, render_coverage_matrix,
+};
 use pretty_specs::ir::{Item, load_proof_manifest};
 use pretty_specs::linker::SymbolTable;
 use pretty_specs::parser::parse;
@@ -37,6 +40,7 @@ fn default_options() -> RenderOptions {
         no_details: false,
         title_override: None,
         docfx: false,
+        ledger: None,
     }
 }
 
@@ -146,6 +150,125 @@ fn snapshot_property_with_proofs() {
     let content = fs::read_to_string(dir.join("properties/key-lifecycle-safety.md")).unwrap();
     insta::assert_snapshot!("property_with_proofs", content);
     let _ = fs::remove_dir_all(&dir);
+}
+
+// ── Coverage ledger snapshots ───────────────────────────────────────────────
+
+fn load_sdep_with_coverage() -> (Vec<Item>, SymbolTable, RenderOptions) {
+    let source = fs::read_to_string("tests/fixtures/SDEP.cry").expect("fixture");
+    let mut items = parse(&source);
+    let manifest = load_proof_manifest(Path::new("tests/fixtures/proof_manifest.json")).unwrap();
+    for item in &mut items {
+        match item {
+            Item::Property {
+                label,
+                proof_status,
+                ..
+            } => {
+                if let Some(status) = manifest.properties.get(label) {
+                    *proof_status = Some(status.clone());
+                }
+            }
+            Item::Function {
+                name, proof_status, ..
+            } => {
+                if let Some(status) = manifest.functions.get(name) {
+                    *proof_status = Some(status.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    let symbols = SymbolTable::build(&items);
+    let inv = load_inventory(Path::new("tests/fixtures/implementation_inventory.json")).unwrap();
+    let cfg = load_coverage_config(Path::new("tests/fixtures/coverage.toml")).unwrap();
+    let ledger = build_ledger(
+        &[("SDEP".to_string(), "".to_string(), items.as_slice())],
+        &inv,
+        &cfg,
+    );
+    let opts = RenderOptions {
+        ledger: Some(ledger),
+        ..RenderOptions::default()
+    };
+    (items, symbols, opts)
+}
+
+#[test]
+fn snapshot_coverage_matrix() {
+    let (_items, _symbols, opts) = load_sdep_with_coverage();
+    let ledger = opts.ledger.as_ref().expect("ledger");
+    let md = render_coverage_matrix(ledger);
+    insta::assert_snapshot!("coverage_matrix", md);
+}
+
+#[test]
+fn snapshot_function_page_with_abstraction_banner() {
+    // hmacSha256 is marked as an abstraction in coverage.toml; the page
+    // must carry a 🧩 banner explaining what it stands in for.
+    let (items, symbols, opts) = load_sdep_with_coverage();
+    let dir = render_to("cov_fn_abs");
+    render_multi_file(&items, &symbols, &dir, &opts).unwrap();
+    let content = fs::read_to_string(dir.join("functions/hmacSha256.md")).unwrap();
+    assert!(
+        content.contains("🧩"),
+        "abstraction banner missing: {content}"
+    );
+    assert!(
+        content.contains("NOT SHA-256"),
+        "abstraction note missing: {content}"
+    );
+    insta::assert_snapshot!("coverage_fn_hmac_sha256", content);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn snapshot_function_page_with_unverified_badge() {
+    // provisionKey has no proof in the fixture manifest (only properties
+    // are proven). With the ledger active, its page should render the
+    // ⚠️ "Implemented, unverified" banner instead of the legacy ✗.
+    let (items, symbols, opts) = load_sdep_with_coverage();
+    let dir = render_to("cov_fn_unv");
+    render_multi_file(&items, &symbols, &dir, &opts).unwrap();
+    let content = fs::read_to_string(dir.join("functions/provisionKey.md")).unwrap();
+    assert!(
+        content.contains("⚠️"),
+        "unverified banner missing: {content}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn snapshot_index_with_coverage_section() {
+    let (items, symbols, opts) = load_sdep_with_coverage();
+    let dir = render_to("cov_index");
+    render_multi_file(&items, &symbols, &dir, &opts).unwrap();
+    let content = fs::read_to_string(dir.join("index.md")).unwrap();
+    assert!(
+        content.contains("## Coverage at a glance"),
+        "coverage glance missing: {content}"
+    );
+    assert!(
+        content.contains("[Coverage Matrix](coverage.md)"),
+        "coverage link missing: {content}"
+    );
+    insta::assert_snapshot!("coverage_index", content);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn coverage_md_is_written_to_output() {
+    // Smoke test: when a ledger is in RenderOptions, render_multi_file
+    // itself does NOT write coverage.md (main.rs owns that step). The
+    // matrix renderer is called separately. Verify it produces non-empty
+    // output without panicking.
+    let (_items, _symbols, opts) = load_sdep_with_coverage();
+    let ledger = opts.ledger.as_ref().expect("ledger");
+    let md = render_coverage_matrix(ledger);
+    assert!(md.contains("# Coverage Matrix"));
+    assert!(md.contains("⚠️"));
+    assert!(md.contains("🧩"));
+    assert!(md.contains("✅") || md.contains("🔲"));
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

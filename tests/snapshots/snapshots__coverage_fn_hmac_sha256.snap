@@ -1,0 +1,34 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# `hmacSha256`  🧩
+
+> 🧩 **Model abstraction.** Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified. No production function is proven equivalent to this definition on this page.
+
+### Signature
+
+**Parameters**
+- `k`: [HmacKey](../types.md#hmackey)
+- `r`: [Request](../types.md#request)
+
+**Returns**
+- [HmacTag](../types.md#hmactag)
+
+<details><summary>Raw signature</summary>
+
+`HmacKey -> Request -> HmacTag`
+
+</details>
+
+### Formal definition (Cryptol)
+
+```haskell
+hmacSha256 k r = k ^ r ^ (r <<< 1)   // placeholder; specs only use equality
+```
+
+Uninterpreted in proofs (SAW can treat this as a Cryptol primitive).
+
+### Related Properties
+- [P8 — Correct Signature Verifies](../properties/authentication-security.md#p8--correct-signature-verifies)
+- [P9 — Wrong Signature Fails](../properties/authentication-security.md#p9--wrong-signature-fails)

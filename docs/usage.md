@@ -19,6 +19,14 @@ pretty-specs SDEP.cry --emit-json
 # Attach proof results
 pretty-specs SDEP.cry --proof-status manifest.json -o docs/
 
+# Generate a Coverage Matrix page (5-badge taxonomy) by joining the model
+# with an implementation inventory + optional coverage config.
+pretty-specs SDEP.cry \
+    --proof-status manifest.json \
+    --implementation-inventory implementation_inventory.json \
+    --coverage-config coverage.toml \
+    -o docs/
+
 # Emit function inventory for saw-spec-gen
 pretty-specs SDEP.cry --emit-function-list -o function_list.json
 
@@ -40,6 +48,8 @@ pretty-specs --adapt-saw-results ./verify_out --manifest-output proof_manifest.j
 | `--emit-function-list` | JSON array of functions (name, signature, arity, doc summary) |
 | `--no-details` | Omit function bodies and property explanations |
 | `--proof-status <FILE>` | Proof-status JSON manifest (properties and/or functions) |
+| `--implementation-inventory <FILE>` | Implementation inventory JSON (saw-spec-gen sidecar). Triggers `coverage.md` rendering. Auto-detected next to `--proof-status` if a file named `implementation_inventory.json` sits there. |
+| `--coverage-config <FILE>` | TOML config declaring `[exclude]`, `[abstraction]`, `[spec_only]` for the coverage matrix. Auto-detected as `coverage.toml` in cwd. |
 | `--adapt-saw-log <FILE>` | Parse raw SAW `prove_print`/`prove` log → proof manifest |
 | `--adapt-saw-results <DIR>` | Scan directory for saw-spec-gen `result.json` files → proof manifest |
 | `--manifest-output <FILE>` | Output path for `--adapt-saw-log` / `--adapt-saw-results` (default: `proof_manifest.json`) |
@@ -140,4 +150,59 @@ Each `result.json` produced by saw-spec-gen (one per `out_{fn}/`) must contain:
 `status` values: `verified` → proven; `counterexample`/`invalid`/`sat` → failed; `timeout`/`error` → failed; anything else → not_attempted.
 
 If `cryptol_fn` is absent, the adapter falls back to the `function` field, then to the parent directory name (`out_provisionKey` → `provisionKey`).
+
+## Coverage Matrix (5-badge taxonomy)
+
+When `--implementation-inventory` (or `--coverage-config`) is supplied, the
+renderer joins the Cryptol model with the production codebase and emits an
+extra page at `<output>/coverage.md` that classifies every function under one
+of five badges:
+
+| Badge | Meaning |
+|-------|---------|
+| ✅ | **Proven** — model proved + implementation verified against it. |
+| 🔲 | **Proven (bounded)** — proved up to a bound (e.g. `MAX_LEN ≤ 16`). |
+| 🧩 | **Model abstraction** — model is a non-executable spec (e.g. `hmacSha256` is uninterpreted). Declared in `coverage.toml`. |
+| ⚠️ | **Implemented, unverified** — real code with no proof. *This is the gap.* |
+| 📄 | **Spec-only** — model exists, no implementation yet. Declared in `coverage.toml`. |
+
+Per-page badges and an info banner are rendered on each function's page; the
+module `index.md` also gains a "Coverage at a glance" section linking to the
+matrix.
+
+### `implementation_inventory.json`
+
+```json
+{
+  "functions": [
+    { "name": "provisionKey",  "lang": "cpp",  "symbol": "...", "file": "cpp/src/decisions.cpp" },
+    { "name": "canonicalize_lp", "lang": "cpp", "file": "cpp/src/canonical.cpp",
+      "models": "canonLenPrefixed", "models_note": "bounded model only" },
+    { "name": "handle_provision", "lang": "cpp", "file": "cpp/src/controller.cpp",
+      "composes": "provisionKey" }
+  ]
+}
+```
+
+Auto-detected as `implementation_inventory.json` next to `--proof-status` if
+not passed explicitly (this is the sidecar saw-spec-gen already writes).
+
+### `coverage.toml`
+
+```toml
+[exclude]
+functions = ["to_lower", "trim"]   # internal helpers — drop from matrix
+
+[abstraction]
+hmacSha256 = "Model is uninterpreted; OpenSSL EVP_HMAC is trusted."
+canonLenPrefixed = "Bounded model (MAX_LEN ≤ 16); production handles arbitrary length."
+
+[spec_only]
+functions = []                     # specs not yet implemented
+```
+
+Auto-detected as `coverage.toml` in the cwd if not passed explicitly.
+
+If neither input is present, the renderer falls back to the legacy `✓/✗/~`
+glyphs and skips the matrix page (fully backward-compatible).
 

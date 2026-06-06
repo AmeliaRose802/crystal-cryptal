@@ -2,12 +2,13 @@
 
 use std::fmt::Write as FmtWrite;
 
+use crate::coverage::{Ledger, function_status_cell};
 use crate::describe::auto_describe_function;
 use crate::ir::{Item, ProofStatus};
 use crate::linker::SymbolTable;
 
 use super::RenderOptions;
-use super::proof::{is_useful_summary, proof_status_cell};
+use super::proof::is_useful_summary;
 use super::util::{escape_md_cell, first_doc_line, is_constant_binding, is_simple_constructor};
 
 pub(super) fn render_functions_index(
@@ -94,13 +95,14 @@ pub(super) fn collect_functions_for_index(
 pub(super) fn render_functions_table(
     functions: &[(String, String, Option<ProofStatus>)],
     link_prefix: &str,
+    ledger: Option<&Ledger>,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "| Function | Status | Description |");
     let _ = writeln!(out, "|----------|--------|-------------|");
     for (name, description, status) in functions {
         let cell = escape_md_cell(description);
-        let status_cell = proof_status_cell(status);
+        let status_cell = function_status_cell(ledger, name, status);
         let _ = writeln!(
             out,
             "| [{name}]({link_prefix}{name}.md) | {status_cell} | {cell} |"
