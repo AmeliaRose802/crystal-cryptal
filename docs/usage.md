@@ -51,9 +51,7 @@ pretty-specs --adapt-saw-results ./verify_out --manifest-output proof_manifest.j
 |---|---|
 | 0 | Success |
 | 1 | Parse error |
-| 2 | I/O error |
-| 3 | Dead local link(s) in generated output |
-| 4 | Duplicate property IDs in spec |
+| 2 | I/O error (cannot read input, cannot write output, missing args) |
 
 ## Output structure
 
