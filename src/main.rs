@@ -1,6 +1,6 @@
 mod cli;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -184,9 +184,11 @@ fn main() {
     });
     let mut modules: Vec<ModuleBundle> = order.into_iter().map(|i| modules[i].clone()).collect();
 
-    if let Some(manifest_path) = &cli.proof_status {
-        apply_proof_manifest(&mut modules, manifest_path);
-    }
+    let function_implementations = if let Some(manifest_path) = &cli.proof_status {
+        apply_proof_manifest(&mut modules, manifest_path)
+    } else {
+        HashMap::new()
+    };
 
     let ledger = build_ledger_from_cli(
         CoverageInputs {
@@ -213,16 +215,32 @@ fn main() {
     }
 
     if modules.len() == 1 {
-        run_single_module(cli, &modules[0], &unified_symbols, ledger);
+        run_single_module(
+            cli,
+            &modules[0],
+            &unified_symbols,
+            ledger,
+            function_implementations,
+        );
         return;
     }
 
-    run_multi_module(cli, &modules, &unified_symbols, ledger);
+    run_multi_module(
+        cli,
+        &modules,
+        &unified_symbols,
+        ledger,
+        function_implementations,
+    );
 }
 
-fn apply_proof_manifest(modules: &mut [ModuleBundle], manifest_path: &std::path::Path) {
+fn apply_proof_manifest(
+    modules: &mut [ModuleBundle],
+    manifest_path: &std::path::Path,
+) -> HashMap<String, HashMap<String, ProofStatus>> {
     match load_proof_manifest(manifest_path) {
         Ok(manifest) => {
+            let function_implementations = manifest.function_implementations.clone();
             let mut consumed_props: HashSet<String> = HashSet::new();
             for module in modules.iter_mut() {
                 for item in &mut module.items {
@@ -288,12 +306,14 @@ fn apply_proof_manifest(modules: &mut [ModuleBundle], manifest_path: &std::path:
                     }
                 }
             }
+            function_implementations
         }
         Err(e) => {
             eprintln!(
                 "warning: failed to load proof manifest {}: {e}",
                 manifest_path.display()
             );
+            HashMap::new()
         }
     }
 }
@@ -303,6 +323,7 @@ fn run_single_module(
     module: &ModuleBundle,
     _symbols: &SymbolTable,
     ledger: Option<Ledger>,
+    function_implementations: HashMap<String, HashMap<String, ProofStatus>>,
 ) {
     // Rebuild the symbol table with an empty prefix so that stored paths are
     // bare ("types.md", "functions/foo.md", …).  The unified_symbols passed in
@@ -333,6 +354,7 @@ fn run_single_module(
         title_override: cli.title.clone(),
         docfx: cli.docfx,
         ledger: ledger.clone(),
+        function_implementations: function_implementations.clone(),
     };
 
     if cli.single_file {
@@ -375,6 +397,7 @@ fn run_multi_module(
     modules: &[ModuleBundle],
     symbols: &SymbolTable,
     ledger: Option<Ledger>,
+    function_implementations: HashMap<String, HashMap<String, ProofStatus>>,
 ) {
     if cli.single_file {
         eprintln!("error: --single-file only supports a single module input");
@@ -415,6 +438,7 @@ fn run_multi_module(
         title_override: cli.title.clone(),
         docfx: cli.docfx,
         ledger: ledger.clone(),
+        function_implementations: function_implementations.clone(),
     };
 
     for module in modules {

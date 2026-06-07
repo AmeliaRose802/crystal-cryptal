@@ -46,6 +46,11 @@
 .PARAMETER ManifestOutput
     Path for the unified proof_manifest.json. Default: ./proof_manifest.json
 
+.PARAMETER MergeProofStatus
+    Additional proof manifest file(s) to merge into -ManifestOutput after
+    Step 3. Function entries are merged by function name and implementation
+    language into `functions.<name>.implementations`.
+
 .PARAMETER CxxIncludeDirs
     Extra include directories passed to clang via -I (C++ only). Maps to
     verify.ps1's -IncludeDirs. Pass multiple values as a comma-separated list:
@@ -101,6 +106,12 @@
 .EXAMPLE
     # Adapt existing saw-spec-gen results and regenerate docs:
     .\pipeline.ps1 -Spec examples/SDEP.cry -SkipVerify -Output docs/
+
+.EXAMPLE
+    # Merge a second per-language manifest (e.g., Rust run) into the main one:
+    .\pipeline.ps1 -Spec examples/SDEP.cry -SkipVerify -SkipAdapt `
+        -ManifestOutput proof_manifest.json `
+        -MergeProofStatus proof_manifest_rust.json -Output docs/
 #>
 [CmdletBinding()]
 param(
@@ -116,6 +127,7 @@ param(
     [string]$PrettySpecs = "pretty-specs",
     [string]$VerifyOutput = "verify_out",
     [string]$ManifestOutput = "proof_manifest.json",
+    [string[]]$MergeProofStatus = @(),
     [string[]]$CxxIncludeDirs = @(),
     [string]$CxxStandard = "",
     [string[]]$ExtraClangFlags = @(),
@@ -156,6 +168,88 @@ function Invoke-PrettySpecs {
     } else {
         $cmd = $PrettySpecs
         $allArgs = $ArgsList
+    }
+
+    function Read-ManifestHashtable {
+        param([string]$Path)
+        if (-not (Test-Path $Path)) {
+            return @{ properties = @{}; functions = @{} }
+        }
+        try {
+            $parsed = Get-Content -Raw -Path $Path | ConvertFrom-Json -AsHashtable
+        } catch {
+            return @{ properties = @{}; functions = @{} }
+        }
+        if (-not ($parsed -is [hashtable])) {
+            return @{ properties = @{}; functions = @{} }
+        }
+        if (-not $parsed.ContainsKey("properties") -or -not ($parsed.properties -is [hashtable])) {
+            $parsed.properties = @{}
+        }
+        if (-not $parsed.ContainsKey("functions") -or -not ($parsed.functions -is [hashtable])) {
+            $parsed.functions = @{}
+        }
+        return $parsed
+    }
+
+    function Normalize-FunctionEntry {
+        param([object]$Entry)
+        $normalized = @{ implementations = @{} }
+        if (-not ($Entry -is [hashtable])) {
+            return $normalized
+        }
+        if ($Entry.ContainsKey("overall")) {
+            $normalized.overall = $Entry.overall
+        } elseif ($Entry.ContainsKey("status")) {
+            # Flat legacy entry (no nesting).
+            $normalized.overall = $Entry
+        }
+        if ($Entry.ContainsKey("implementations") -and ($Entry.implementations -is [hashtable])) {
+            foreach ($lang in $Entry.implementations.Keys) {
+                $normalized.implementations[$lang] = $Entry.implementations[$lang]
+            }
+        }
+        if ($Entry.ContainsKey("by_language") -and ($Entry.by_language -is [hashtable])) {
+            foreach ($lang in $Entry.by_language.Keys) {
+                if (-not $normalized.implementations.ContainsKey($lang)) {
+                    $normalized.implementations[$lang] = $Entry.by_language[$lang]
+                }
+            }
+        }
+        return $normalized
+    }
+
+    function Merge-ProofManifestFiles {
+        param(
+            [string]$TargetManifest,
+            [string[]]$SourceManifests
+        )
+
+        $base = Read-ManifestHashtable $TargetManifest
+        foreach ($source in $SourceManifests) {
+            if ($source -eq "" -or -not (Test-Path $source)) {
+                Write-Host "  merge warning: manifest not found: $source" -ForegroundColor Yellow
+                continue
+            }
+            $incoming = Read-ManifestHashtable $source
+            foreach ($p in $incoming.properties.Keys) {
+                $base.properties[$p] = $incoming.properties[$p]
+            }
+            foreach ($fn in $incoming.functions.Keys) {
+                $baseEntry = Normalize-FunctionEntry $base.functions[$fn]
+                $incomingEntry = Normalize-FunctionEntry $incoming.functions[$fn]
+                foreach ($lang in $incomingEntry.implementations.Keys) {
+                    $baseEntry.implementations[$lang] = $incomingEntry.implementations[$lang]
+                }
+                if (-not $baseEntry.ContainsKey("overall") -and $incomingEntry.ContainsKey("overall")) {
+                    $baseEntry.overall = $incomingEntry.overall
+                }
+                $base.functions[$fn] = $baseEntry
+            }
+        }
+
+        $serialized = $base | ConvertTo-Json -Depth 32
+        Set-Content -Path $TargetManifest -Value "$serialized`n"
     }
     Write-Host "  > $cmd $($allArgs -join ' ')" -ForegroundColor DarkGray
     & $cmd @allArgs
@@ -295,6 +389,11 @@ if (-not $SkipAdapt) {
     }
 } else {
     Write-Host "`n[Step 3] Skipped (-SkipAdapt)" -ForegroundColor DarkGray
+}
+
+if ($MergeProofStatus.Count -gt 0) {
+    Write-Host "`n[Step 3b] Merging proof manifests -> $ManifestOutput" -ForegroundColor Cyan
+    Merge-ProofManifestFiles -TargetManifest $ManifestOutput -SourceManifests $MergeProofStatus
 }
 
 # ── Step 4: Final render with proof badges ────────────────────────────────────

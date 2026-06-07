@@ -59,7 +59,9 @@ pretty-specs --adapt-saw-results ./verify_out --manifest-output proof_manifest.j
 The bundled [pipeline.ps1](pipeline.ps1) chains all of these steps end-to-end
 (initial render → emit function list → run saw-spec-gen per function →
 adapt results → re-render with badges). Run `Get-Help .\pipeline.ps1 -Full`
-for parameters.
+for parameters. To combine separate language runs into one manifest, pass one
+or more `-MergeProofStatus` files; entries are merged by function name into
+`functions.<name>.implementations`.
 
 ## CLI reference
 
@@ -133,8 +135,7 @@ results. The manifest accepts both a structured form and a legacy flat form
   },
   "functions": {
     "provisionKey": {
-      "overall": { "status": "proven", "solver": "z3", "time_secs": 1.2 },
-      "by_language": {
+      "implementations": {
         "cpp":  { "status": "proven", "solver": "z3", "impl_file": "sdep.cpp" },
         "rust": { "status": "not_attempted" }
       }
@@ -142,6 +143,9 @@ results. The manifest accepts both a structured form and a legacy flat form
   }
 }
 ```
+
+Legacy `overall`-only function entries are still accepted for backwards
+compatibility.
 
 Supported statuses: `proven`, `assumed`, `failed`, `not_attempted`.
 
