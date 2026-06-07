@@ -295,6 +295,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -312,6 +313,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -329,6 +331,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(

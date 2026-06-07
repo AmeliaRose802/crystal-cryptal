@@ -1,6 +1,6 @@
 // Proof-status badges, detail lines, failure callouts, and rerun command.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 
 use crate::ir::ProofStatus;
@@ -16,6 +16,49 @@ pub(super) fn proof_badge(status: &Option<ProofStatus>) -> String {
         Some(ProofStatus::Assumed) => "~".into(),
         Some(ProofStatus::NotAttempted) => "✗".into(),
         None => String::new(),
+    }
+}
+
+/// Per-implementation badge line for function headings, e.g.
+/// `C++ ✓ · Rust ⚠ not_attempted`.
+pub(super) fn implementation_badges(
+    implementations: Option<&HashMap<String, ProofStatus>>,
+) -> Option<String> {
+    let implementations = implementations?;
+    if implementations.is_empty() {
+        return None;
+    }
+
+    let mut keys: Vec<&str> = implementations.keys().map(String::as_str).collect();
+    keys.sort_by_key(|k| match *k {
+        "cpp" => (0_u8, *k),
+        "rust" => (1_u8, *k),
+        _ => (2_u8, *k),
+    });
+
+    let rendered = keys
+        .into_iter()
+        .filter_map(|key| {
+            let status = implementations.get(key)?;
+            let language = match key {
+                "cpp" => "C++",
+                "rust" => "Rust",
+                _ => key,
+            };
+            let verdict = match status {
+                ProofStatus::Proven { .. } => "✓",
+                ProofStatus::Assumed => "~ assumed",
+                ProofStatus::Failed { .. } => "⚠ failed",
+                ProofStatus::NotAttempted => "⚠ not_attempted",
+            };
+            Some(format!("{language} {verdict}"))
+        })
+        .collect::<Vec<_>>();
+
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered.join(" · "))
     }
 }
 
@@ -259,6 +302,26 @@ mod tests {
         assert_eq!(proof_badge(&Some(ProofStatus::Assumed)), "~");
         assert_eq!(proof_badge(&Some(ProofStatus::NotAttempted)), "✗");
         assert_eq!(proof_badge(&None), "");
+    }
+
+    #[test]
+    fn implementation_badges_rendering() {
+        let mut statuses = HashMap::new();
+        statuses.insert(
+            "cpp".to_string(),
+            ProofStatus::Proven {
+                solver: "z3".into(),
+                time_secs: None,
+                overrides: vec![],
+                iterations: None,
+                verify_command: None,
+                verify_script: None,
+            },
+        );
+        statuses.insert("rust".to_string(), ProofStatus::NotAttempted);
+
+        let rendered = implementation_badges(Some(&statuses)).expect("badges");
+        assert_eq!(rendered, "C++ ✓ · Rust ⚠ not_attempted");
     }
 
     #[test]

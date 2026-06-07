@@ -169,21 +169,28 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
         let fn_name = extract_fn_name(&value, path);
         let proof_status = result_value_to_status(&value);
 
-        let mut entry = serde_json::Map::new();
-        entry.insert("overall".into(), proof_status_to_json(&proof_status));
-        if let Some(lang) = value.get("impl_lang").and_then(|v| v.as_str()) {
-            let mut lang_entry = proof_status_to_json(&proof_status);
-            if let Some(obj) = lang_entry.as_object_mut()
-                && let Some(f) = value.get("impl_file").and_then(|v| v.as_str())
-            {
-                obj.insert("impl_file".into(), serde_json::json!(f));
-            }
-            entry.insert(
-                "by_language".into(),
-                serde_json::json!({ lang: lang_entry }),
-            );
+        let mut status_json = proof_status_to_json(&proof_status);
+        if let Some(obj) = status_json.as_object_mut()
+            && let Some(f) = value.get("impl_file").and_then(|v| v.as_str())
+        {
+            obj.insert("impl_file".into(), serde_json::json!(f));
         }
-        functions_map.insert(fn_name, serde_json::Value::Object(entry));
+
+        let entry = functions_map
+            .entry(fn_name)
+            .or_insert_with(|| serde_json::json!({ "implementations": {} }));
+        if let Some(entry_obj) = entry.as_object_mut() {
+            if let Some(lang) = value.get("impl_lang").and_then(|v| v.as_str()) {
+                let implementations = entry_obj
+                    .entry("implementations")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(impl_obj) = implementations.as_object_mut() {
+                    impl_obj.insert(lang.to_string(), status_json);
+                }
+            } else {
+                entry_obj.insert("overall".into(), status_json);
+            }
+        }
     }
 
     let fn_count = functions_map.len();

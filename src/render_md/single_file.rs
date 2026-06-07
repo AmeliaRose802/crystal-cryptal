@@ -13,8 +13,8 @@ use super::equivalence::{
 };
 use super::mermaid::{render_coverage_map_mermaid, render_flowchart_mermaid};
 use super::proof::{
-    intentional_counterexample_callout, is_intentional_counterexample, proof_badge,
-    proof_detail_line, render_failure_details_callout, render_proof_details_callout,
+    implementation_badges, intentional_counterexample_callout, is_intentional_counterexample,
+    proof_badge, proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
@@ -140,7 +140,10 @@ pub fn render_single_file(
                 is_private,
             } = item
             {
-                let badge = function_title_badge(options.ledger.as_ref(), name, proof_status);
+                let badge = implementation_badges(options.function_implementations.get(name))
+                    .unwrap_or_else(|| {
+                        function_title_badge(options.ledger.as_ref(), name, proof_status)
+                    });
                 let private_badge = if *is_private { "`internal helper`" } else { "" };
                 let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
                     (false, false) => format!("  {badge}  {private_badge}"),
@@ -361,6 +364,7 @@ pub fn render_single_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::ProofStatus;
 
     fn load_items() -> Vec<Item> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -381,6 +385,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: std::collections::HashMap::new(),
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(doc.contains("# SDEP"), "should contain module title");
@@ -408,6 +413,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: std::collections::HashMap::new(),
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(
@@ -437,11 +443,59 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: std::collections::HashMap::new(),
         };
         let doc = render_single_file(&items, &symbols, &options);
         assert!(
             !doc.contains("<details>"),
             "no_details should suppress detail folds in single-file"
         );
+    }
+
+    #[test]
+    fn render_single_file_function_heading_shows_per_language_badges() {
+        let source = r#"
+module Demo where
+enforceAccess : [8] -> [8]
+enforceAccess x = x
+"#;
+        let mut items = crate::parser::parse(source);
+        for item in &mut items {
+            if let Item::Function {
+                name, proof_status, ..
+            } = item
+                && name == "enforceAccess"
+            {
+                *proof_status = Some(ProofStatus::NotAttempted);
+            }
+        }
+        let symbols = SymbolTable::build(&items);
+        let mut function_implementations = std::collections::HashMap::new();
+        function_implementations.insert(
+            "enforceAccess".to_string(),
+            std::collections::HashMap::from([
+                (
+                    "cpp".to_string(),
+                    ProofStatus::Proven {
+                        solver: "z3".into(),
+                        time_secs: None,
+                        overrides: vec![],
+                        iterations: None,
+                        verify_command: None,
+                        verify_script: None,
+                    },
+                ),
+                ("rust".to_string(), ProofStatus::NotAttempted),
+            ]),
+        );
+        let options = RenderOptions {
+            no_details: false,
+            title_override: None,
+            docfx: false,
+            ledger: None,
+            function_implementations,
+        };
+        let doc = render_single_file(&items, &symbols, &options);
+        assert!(doc.contains("### `enforceAccess`  C++ ✓ · Rust ⚠ not_attempted"));
     }
 }

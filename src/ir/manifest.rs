@@ -80,29 +80,39 @@ impl From<ManifestEntry> for ProofStatus {
 ///
 /// Supports both the nested format written by `--adapt-saw-results`:
 /// ```json
-/// { "overall": {"status":"proven","solver":"z3"}, "by_language": {"cpp":{...}} }
+/// { "implementations": {"cpp": {"status":"proven","solver":"z3"}} }
 /// ```
 /// and a flat fallback (no `overall` key) for hand-authored manifests that
 /// use the same shape as property entries.
-///
-/// The optional `by_language` breakdown is accepted by the JSON schema but
-/// not surfaced through this loader — serde silently ignores it (we never
-/// store it on the resulting [`ProofManifest`]). Add it back to the
-/// `Nested` variant if you need to expose the per-language detail later.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(super) enum FunctionManifestEntry {
-    /// Nested format: `overall` (plus an ignored `by_language`).
-    Nested { overall: ManifestEntry },
     /// Flat fallback: the entry is a `ManifestEntry` directly (no nesting).
     Flat(ManifestEntry),
+    /// Nested format with optional legacy `overall` and per-implementation map.
+    Nested {
+        #[serde(default)]
+        overall: Option<ManifestEntry>,
+        #[serde(default, alias = "by_language")]
+        implementations: HashMap<String, ManifestEntry>,
+    },
 }
 
 impl FunctionManifestEntry {
-    pub(super) fn into_overall(self) -> ManifestEntry {
+    pub(super) fn into_status_parts(self) -> (Option<ProofStatus>, HashMap<String, ProofStatus>) {
         match self {
-            FunctionManifestEntry::Nested { overall } => overall,
-            FunctionManifestEntry::Flat(entry) => entry,
+            FunctionManifestEntry::Nested {
+                overall,
+                implementations,
+            } => {
+                let impls: HashMap<String, ProofStatus> = implementations
+                    .into_iter()
+                    .map(|(k, v)| (k, ProofStatus::from(v)))
+                    .collect();
+                let overall = overall.map(ProofStatus::from).or_else(|| aggregate(&impls));
+                (overall, impls)
+            }
+            FunctionManifestEntry::Flat(entry) => (Some(ProofStatus::from(entry)), HashMap::new()),
         }
     }
 }
@@ -119,6 +129,7 @@ pub(super) struct ExtendedManifest {
 pub struct ProofManifest {
     pub properties: HashMap<String, ProofStatus>,
     pub functions: HashMap<String, ProofStatus>,
+    pub function_implementations: HashMap<String, HashMap<String, ProofStatus>>,
 }
 
 /// Load proof status from a JSON manifest file.
@@ -141,15 +152,30 @@ pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
             .into_iter()
             .map(|(k, v)| (k, ProofStatus::from(v)))
             .collect();
-        let functions = manifest
-            .functions
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
-            .collect();
+        let functions: HashMap<String, (Option<ProofStatus>, HashMap<String, ProofStatus>)> =
+            manifest
+                .functions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| {
+                    let (overall, implementations) = v.into_status_parts();
+                    (k, (overall, implementations))
+                })
+                .collect();
+        let mut function_overall = HashMap::new();
+        let mut function_implementations = HashMap::new();
+        for (name, (overall, implementations)) in functions {
+            if let Some(status) = overall {
+                function_overall.insert(name.clone(), status);
+            }
+            if !implementations.is_empty() {
+                function_implementations.insert(name, implementations);
+            }
+        }
         return Ok(ProofManifest {
             properties,
-            functions,
+            functions: function_overall,
+            function_implementations,
         });
     }
 
@@ -163,5 +189,43 @@ pub fn load_proof_manifest(path: &Path) -> Result<ProofManifest, String> {
     Ok(ProofManifest {
         properties,
         functions: HashMap::new(),
+        function_implementations: HashMap::new(),
     })
+}
+
+fn aggregate(implementations: &HashMap<String, ProofStatus>) -> Option<ProofStatus> {
+    let mut found_proven: Option<ProofStatus> = None;
+    let mut found_assumed: Option<ProofStatus> = None;
+    let mut found_failed: Option<ProofStatus> = None;
+    let mut found_not_attempted = false;
+
+    for status in implementations.values() {
+        match status {
+            ProofStatus::Failed { .. } => {
+                if found_failed.is_none() {
+                    found_failed = Some(status.clone());
+                }
+            }
+            ProofStatus::NotAttempted => found_not_attempted = true,
+            ProofStatus::Assumed => {
+                if found_assumed.is_none() {
+                    found_assumed = Some(status.clone());
+                }
+            }
+            ProofStatus::Proven { .. } => {
+                if found_proven.is_none() {
+                    found_proven = Some(status.clone());
+                }
+            }
+        }
+    }
+
+    found_failed
+        .or(if found_not_attempted {
+            Some(ProofStatus::NotAttempted)
+        } else {
+            None
+        })
+        .or(found_assumed)
+        .or(found_proven)
 }

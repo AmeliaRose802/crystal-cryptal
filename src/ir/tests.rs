@@ -130,11 +130,15 @@ fn proof_manifest_nested_function_entry() {
             .functions
             .unwrap_or_default()
             .into_iter()
-            .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
+            .filter_map(|(k, v)| {
+                let (overall, _) = v.into_status_parts();
+                overall.map(|status| (k, status))
+            })
             .collect();
         ProofManifest {
             properties,
             functions,
+            function_implementations: HashMap::new(),
         }
     });
 
@@ -164,13 +168,56 @@ fn proof_manifest_flat_function_entry() {
         .functions
         .unwrap_or_default()
         .into_iter()
-        .map(|(k, v)| (k, ProofStatus::from(v.into_overall())))
+        .filter_map(|(k, v)| {
+            let (overall, _) = v.into_status_parts();
+            overall.map(|status| (k, status))
+        })
         .collect();
 
     assert!(matches!(
         functions.get("provisionKey").unwrap(),
         ProofStatus::Proven { solver, .. } if solver == "z3"
     ));
+}
+
+#[test]
+fn proof_manifest_function_implementations_entry() {
+    let json = r#"{
+        "properties": {},
+        "functions": {
+            "enforceAccess": {
+                "implementations": {
+                    "cpp": { "status": "proven", "solver": "z3", "time_secs": 0.5 },
+                    "rust": { "status": "not_attempted" }
+                }
+            }
+        }
+    }"#;
+
+    let v: serde_json::Value = serde_json::from_str(json).unwrap();
+    let m: ExtendedManifest = serde_json::from_value(v).unwrap();
+    let mut function_overall = HashMap::new();
+    let mut function_implementations = HashMap::new();
+    for (name, entry) in m.functions.unwrap_or_default() {
+        let (overall, implementations) = entry.into_status_parts();
+        if let Some(status) = overall {
+            function_overall.insert(name.clone(), status);
+        }
+        if !implementations.is_empty() {
+            function_implementations.insert(name, implementations);
+        }
+    }
+
+    assert!(matches!(
+        function_overall.get("enforceAccess"),
+        Some(ProofStatus::NotAttempted)
+    ));
+    let impls = function_implementations.get("enforceAccess").unwrap();
+    assert!(matches!(
+        impls.get("cpp"),
+        Some(ProofStatus::Proven { solver, .. }) if solver == "z3"
+    ));
+    assert!(matches!(impls.get("rust"), Some(ProofStatus::NotAttempted)));
 }
 
 #[test]

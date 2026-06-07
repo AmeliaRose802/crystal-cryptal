@@ -4,6 +4,7 @@
 // the CI line-count cap. See `.github/copilot-instructions.md` for the
 // per-file size rule.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -46,6 +47,9 @@ pub struct RenderOptions {
     /// vocabulary to the five-badge taxonomy (`✅ 🔲 🧩 ⚠️ 📄`), and a
     /// `coverage.md` matrix page is emitted at the output root.
     pub ledger: Option<crate::coverage::Ledger>,
+    /// Optional per-function per-implementation proof statuses loaded from
+    /// `proof_manifest.json` (`functions.<name>.implementations`).
+    pub function_implementations: HashMap<String, HashMap<String, crate::ir::ProofStatus>>,
 }
 
 /// Render a complete set of Markdown files to the output directory.
@@ -169,6 +173,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -197,6 +202,7 @@ mod tests {
             title_override: Some("My Custom Title".into()),
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -214,6 +220,7 @@ mod tests {
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test_nodetails");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -250,6 +257,7 @@ property P99_TemptingButFalse x = x > 0
             title_override: None,
             docfx: false,
             ledger: None,
+            function_implementations: HashMap::new(),
         };
         render_multi_file(&items, &symbols, &tmpdir, &options).unwrap();
 
