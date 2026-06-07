@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use pretty_specs::coverage::Ledger;
 use pretty_specs::ir::{Item, ProofStatus, load_proof_manifest};
 use pretty_specs::linker::{ModuleSpec, SymbolTable};
 use pretty_specs::parser::parse;
@@ -16,6 +17,7 @@ use cli::bundle::{
     JsonModule, ModuleBundle, collect_input_files, detect_module_name, extract_module_dependencies,
     render_multi_module_index, topological_module_order,
 };
+use cli::coverage::{CoverageInputs, build_ledger_from_cli, write_coverage_matrix};
 use cli::extra_docs::handle_extra_docs;
 use cli::functions::run_emit_function_list;
 use cli::saw_adapt::{run_adapt_saw_results, run_saw_log_adapter};
@@ -54,6 +56,21 @@ struct Cli {
     /// Path to a proof-status JSON manifest (properties and/or functions)
     #[arg(long, value_name = "FILE")]
     proof_status: Option<PathBuf>,
+
+    /// Path to `implementation_inventory.json` — the full inventory of
+    /// real C++/Rust functions emitted by saw-spec-gen. When present (or
+    /// auto-detected next to `--proof-status`), the renderer surfaces a
+    /// "Coverage Matrix" page listing every real function not covered by
+    /// a proof so unverified gaps are visible by default.
+    #[arg(long, value_name = "FILE")]
+    implementation_inventory: Option<PathBuf>,
+
+    /// Path to `coverage.toml` — exclusions, model abstractions, and
+    /// spec-only entries that drive the per-page badges and matrix
+    /// classification. Defaults to `coverage.toml` in the current
+    /// directory if it exists.
+    #[arg(long, value_name = "FILE")]
+    coverage_config: Option<PathBuf>,
 
     /// Parse a raw SAW prove_print / prove log file and emit a proof manifest
     #[arg(long, value_name = "FILE")]
@@ -171,6 +188,15 @@ fn main() {
         apply_proof_manifest(&mut modules, manifest_path);
     }
 
+    let ledger = build_ledger_from_cli(
+        CoverageInputs {
+            implementation_inventory: cli.implementation_inventory.as_deref(),
+            coverage_config: cli.coverage_config.as_deref(),
+            proof_status: cli.proof_status.as_deref(),
+        },
+        &modules,
+    );
+
     let module_specs: Vec<ModuleSpec<'_>> = modules
         .iter()
         .map(|m| ModuleSpec {
@@ -187,11 +213,11 @@ fn main() {
     }
 
     if modules.len() == 1 {
-        run_single_module(cli, &modules[0], &unified_symbols);
+        run_single_module(cli, &modules[0], &unified_symbols, ledger);
         return;
     }
 
-    run_multi_module(cli, &modules, &unified_symbols);
+    run_multi_module(cli, &modules, &unified_symbols, ledger);
 }
 
 fn apply_proof_manifest(modules: &mut [ModuleBundle], manifest_path: &std::path::Path) {
@@ -272,7 +298,12 @@ fn apply_proof_manifest(modules: &mut [ModuleBundle], manifest_path: &std::path:
     }
 }
 
-fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
+fn run_single_module(
+    cli: Cli,
+    module: &ModuleBundle,
+    _symbols: &SymbolTable,
+    ledger: Option<Ledger>,
+) {
     // Rebuild the symbol table with an empty prefix so that stored paths are
     // bare ("types.md", "functions/foo.md", …).  The unified_symbols passed in
     // were constructed with output_prefix = module_name (e.g. "SDEP"), which
@@ -301,6 +332,7 @@ fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
         no_details: cli.no_details,
         title_override: cli.title.clone(),
         docfx: cli.docfx,
+        ledger: ledger.clone(),
     };
 
     if cli.single_file {
@@ -325,6 +357,9 @@ fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
             );
             std::process::exit(2);
         });
+    if let Some(l) = ledger.as_ref() {
+        write_coverage_matrix(&cli.output, l);
+    }
     handle_branding_assets(
         &cli.output,
         cli.logo.as_deref(),
@@ -335,7 +370,12 @@ fn run_single_module(cli: Cli, module: &ModuleBundle, _symbols: &SymbolTable) {
     eprintln!("wrote output to {}", cli.output.display());
 }
 
-fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
+fn run_multi_module(
+    cli: Cli,
+    modules: &[ModuleBundle],
+    symbols: &SymbolTable,
+    ledger: Option<Ledger>,
+) {
     if cli.single_file {
         eprintln!("error: --single-file only supports a single module input");
         std::process::exit(2);
@@ -374,6 +414,7 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
         no_details: cli.no_details,
         title_override: cli.title.clone(),
         docfx: cli.docfx,
+        ledger: ledger.clone(),
     };
 
     for module in modules {
@@ -398,11 +439,15 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
         eprintln!("error: cannot create {}: {e}", cli.output.display());
         std::process::exit(2);
     });
-    let root_index = render_multi_module_index(modules);
+    let root_index = render_multi_module_index(modules, ledger.as_ref());
     std::fs::write(cli.output.join("index.md"), root_index).unwrap_or_else(|e| {
         eprintln!("error: cannot write {}/index.md: {e}", cli.output.display());
         std::process::exit(2);
     });
+
+    if let Some(l) = ledger.as_ref() {
+        write_coverage_matrix(&cli.output, l);
+    }
 
     if cli.docfx {
         let mut toc =
@@ -412,6 +457,9 @@ fn run_multi_module(cli: Cli, modules: &[ModuleBundle], symbols: &SymbolTable) {
                 "  - name: {}\n    href: {}/index.md\n",
                 m.module_name, m.output_prefix
             ));
+        }
+        if ledger.is_some() {
+            toc.push_str("- name: Coverage\n  href: coverage.md\n");
         }
         std::fs::write(cli.output.join("toc.yml"), toc).unwrap_or_else(|e| {
             eprintln!("error: cannot write toc.yml: {e}");

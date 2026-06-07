@@ -19,18 +19,6 @@ pub(super) fn proof_badge(status: &Option<ProofStatus>) -> String {
     }
 }
 
-/// One-cell summary of a function's SAW-equivalence proof state for the
-/// Functions index table.
-pub(super) fn proof_status_cell(status: &Option<ProofStatus>) -> String {
-    match status {
-        Some(ProofStatus::Proven { .. }) => "✓ proven".into(),
-        Some(ProofStatus::Assumed) => "~ assumed".into(),
-        Some(ProofStatus::Failed { .. }) => "✗ failed".into(),
-        Some(ProofStatus::NotAttempted) => "✗ not attempted".into(),
-        None => "—".into(),
-    }
-}
-
 /// Whether a candidate first-line summary is presentable in a table cell.
 pub(super) fn is_useful_summary(s: &str) -> bool {
     let trimmed = s.trim();

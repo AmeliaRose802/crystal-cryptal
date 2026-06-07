@@ -1,0 +1,62 @@
+---
+source: tests/snapshots.rs
+expression: content
+---
+# SDEP
+
+## Coverage at a glance
+
+✅ 0 proven · 🔲 0 bounded · 🧩 3 abstractions · ⚠️ 20 **unverified** · 📄 0 spec-only
+
+See the full breakdown — including every real function the codebase contains, whether or not it was modeled — on the [Coverage Matrix](coverage.md). Pages here that carry a 🧩, 🔲, or ⚠️ badge surface the caveat in a banner at the top.
+
+## How verification works here
+
+This site reports **two independent layers of proof**, and a security claim about the production binary needs *both*:
+
+1. **Properties are proven against the design.** Each entry in [Security Properties](#security-properties) is a Cryptol `property` discharged by a solver (typically Z3) over the Cryptol model. A `✓` here says the *logic of the spec* is sound.
+
+2. **Functions are proven against the implementation.** Each entry in [Functions](functions/index.md) is a Cryptol shim paired with a SAW `llvm_verify` / `mir_verify` proof showing the C++/Rust implementation produces identical outputs on every input. A `✓` here says *the code matches the model*.
+
+A property's guarantee therefore only transfers to the compiled binary insofar as **every function it mentions** also carries a SAW equivalence proof. Each property page surfaces this transitive status as an *Implementation equivalence* callout: if any involved function is unproven, assumed, or failed, the callout calls that out explicitly so a green Cryptol verdict isn't read as an end-to-end certificate.
+
+## Types
+
+All type definitions: [types.md](types.md)
+
+## Functions
+
+| Function | Status | Description |
+|----------|--------|-------------|
+| [provisionKey](functions/provisionKey.md) | ⚠️ Implemented, unverified | Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `ProvisionResult`. Defaults to `PR_Succeeded` when no prior condition matches. |
+| [enrollDevice](functions/enrollDevice.md) | ⚠️ Implemented, unverified | Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `EnrollmentResult`. Defaults to `ER_Unauthorized` when no prior condition matches. |
+| [authenticate](functions/authenticate.md) | ⚠️ Implemented, unverified | Returns `True` only when all of `dateValid`, `signatureValid`, and `claimsValid` are true. |
+| [isValidRequestDate](functions/isValidRequestDate.md) | ⚠️ Implemented, unverified | Checks whether the request date is valid: validates a bounded condition over `requestTs`, `currentTime`, and `windowSeconds`. |
+| [hmacSha256](functions/hmacSha256.md) | 🧩 Model abstraction | Uninterpreted in proofs (SAW can treat this as a Cryptol primitive). |
+| [isValidSignature](functions/isValidSignature.md) | 🧩 Model abstraction | Checks whether the signature is valid by comparing the computed and expected values. |
+| [enforceAccess](functions/enforceAccess.md) | ⚠️ Implemented, unverified | Evaluates 6 conditions on `mode` and `decision` in priority order, returning the first applicable a tuple. Defaults to `(True, False)` when no prior condition matches. |
+| [getStatus](functions/getStatus.md) | ⚠️ Implemented, unverified | Constructs `EnrollmentStatus` from the given inputs. |
+| [canonNormalized](functions/canonNormalized.md) | ⚠️ Implemented, unverified | A field is normalized iff bytes at indices >= n are zero. This is the invariant the C++ / Rust code maintains implicitly (it only reads the first n bytes); making it explicit keeps logically-distinct requests distinct as Cryptol values, so any collision the solver finds is a *real* one. |
+| [canonLenPrefixed](functions/canonLenPrefixed.md) | 🧩 Model abstraction | Length-prefixed canonicalization. Each variable-length field is preceded by its length tag: a parser reads the tag, then exactly that many bytes, then the next tag, then exactly that many bytes. No byte inside any field can be misread as a boundary, so the encoding is structurally injective. |
+| [fieldNormalized](functions/fieldNormalized.md) | ⚠️ Implemented, unverified | Compares computed and provided values over `f`, returning `True` on match. |
+| [requestNormalized](functions/requestNormalized.md) | ⚠️ Implemented, unverified | Tests whether `r` is well-formed. |
+| [lpField](functions/lpField.md) | ⚠️ Implemented, unverified | Length-prefix a Field as [len-byte] # buf. |
+| [lpHeader](functions/lpHeader.md) | ⚠️ Implemented, unverified | Length-prefix a header pair OR emit a constant-size all-zero placeholder if it is the auth header. Fixed output size keeps canonicalizeS Cryptol- statable; the placeholder content is irrelevant because the encoder elides auth headers regardless of their value. |
+| [canonicalizeS](functions/canonicalizeS.md) | ⚠️ Implemented, unverified | Concrete canonicalize: length-prefixed method, body, headers (with auth-header exclusion), path, then the 8-byte big-endian timestamp. |
+| [verifierTimestamp_current](functions/verifierTimestamp_current.md) | ⚠️ Implemented, unverified | The timestamp the verifier validates must equal the timestamp inside the signed request — otherwise an attacker can replay a stale signed request with a fresh "current time" supplied by the caller and pass the freshness check despite the signature being over old bytes. |
+
+Per-function detail pages: [functions](functions/index.md)
+
+## Security Properties
+
+| Category | Properties | Status |
+|----------|------------|--------|
+| [Key Lifecycle Safety](properties/key-lifecycle-safety.md) | P1–P5 | 3 ⚠ design-only · 2 unverified |
+| [Authentication Security](properties/authentication-security.md) | P6–P10 | 4 unverified · 1 ~ assumed |
+| [Access Control](properties/access-control.md) | P11–P14 | 0/4 |
+| [Protocol Liveness](properties/protocol-liveness.md) | P15–P18 | 0/4 |
+| [Error Handling](properties/error-handling.md) | P19–P27 | 1 ⚠ design-only · 8 unverified |
+| [Auth-header exclusion](properties/auth-header-exclusion.md) | P28 | 0/1 |
+| [Timestamp binding](properties/timestamp-binding.md) | P29 | 0/1 |
+
+4/29 properties proven, 1 assumed, 1 not attempted

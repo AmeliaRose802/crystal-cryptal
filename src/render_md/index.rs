@@ -16,7 +16,7 @@ pub(super) fn render_index(
     items: &[Item],
     symbols: &SymbolTable,
     options: &RenderOptions,
-    _path_prefix: &str,
+    path_prefix: &str,
 ) -> String {
     let mut out = String::new();
 
@@ -36,6 +36,27 @@ pub(super) fn render_index(
             let _ = writeln!(out, "{line}");
         }
         out.push('\n');
+    }
+
+    if let Some(ledger) = options.ledger.as_ref() {
+        let coverage_href = coverage_link_target(path_prefix);
+        let unverified = ledger.count(crate::coverage::CoverageBadge::Unverified);
+        let proven = ledger.count(crate::coverage::CoverageBadge::Proven);
+        let bounded = ledger.count(crate::coverage::CoverageBadge::ProvenBounded);
+        let abs = ledger.count(crate::coverage::CoverageBadge::ModelAbstraction);
+        let spec = ledger.count(crate::coverage::CoverageBadge::SpecOnly);
+        let _ = writeln!(out, "## Coverage at a glance\n");
+        let _ = writeln!(
+            out,
+            "✅ {proven} proven · 🔲 {bounded} bounded · 🧩 {abs} abstractions · ⚠️ {unverified} **unverified** · 📄 {spec} spec-only\n"
+        );
+        let _ = writeln!(
+            out,
+            "See the full breakdown — including every real function the codebase \
+             contains, whether or not it was modeled — on the [Coverage Matrix]({coverage_href}). \
+             Pages here that carry a 🧩, 🔲, or ⚠️ badge surface the caveat in a \
+             banner at the top.\n"
+        );
     }
 
     if items
@@ -137,7 +158,11 @@ pub(super) fn render_index(
         let _ = writeln!(out, "## Functions\n");
         let fns = collect_functions_for_index(items);
         if !fns.is_empty() {
-            out.push_str(&render_functions_table(&fns, "functions/"));
+            out.push_str(&render_functions_table(
+                &fns,
+                "functions/",
+                options.ledger.as_ref(),
+            ));
         }
         let _ = writeln!(
             out,
@@ -230,6 +255,23 @@ pub(super) fn render_index(
     out
 }
 
+/// Compute the relative href from a module's `index.md` to `coverage.md`
+/// at the output root. Empty prefix → same directory (`coverage.md`);
+/// nested prefix like `"SDEP"` → one level up (`"../coverage.md"`);
+/// `"A/B"` → two levels up; etc.
+fn coverage_link_target(path_prefix: &str) -> String {
+    if path_prefix.is_empty() {
+        return "coverage.md".to_string();
+    }
+    let depth = path_prefix.split('/').filter(|s| !s.is_empty()).count();
+    let mut href = String::new();
+    for _ in 0..depth {
+        href.push_str("../");
+    }
+    href.push_str("coverage.md");
+    href
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +294,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -268,6 +311,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -284,6 +328,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(

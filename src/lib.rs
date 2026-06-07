@@ -1,3 +1,4 @@
+pub mod coverage;
 pub mod describe;
 pub mod ir;
 pub mod lexer;

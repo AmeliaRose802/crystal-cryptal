@@ -3,6 +3,7 @@
 
 pub(crate) mod assets;
 pub(crate) mod bundle;
+pub(crate) mod coverage;
 pub(crate) mod extra_docs;
 pub(crate) mod functions;
 pub(crate) mod saw_adapt;

@@ -35,11 +35,17 @@ use properties::render_property_files;
 use types::render_types;
 use util::is_simple_constructor;
 
+#[derive(Default)]
 pub struct RenderOptions {
     pub no_details: bool,
     pub title_override: Option<String>,
     /// Emit DocFX-compatible front-matter and toc.yml files.
     pub docfx: bool,
+    /// Optional coverage ledger. When present, per-page badges and the
+    /// Functions index switch from the legacy single-glyph `✓ / ✗`
+    /// vocabulary to the five-badge taxonomy (`✅ 🔲 🧩 ⚠️ 📄`), and a
+    /// `coverage.md` matrix page is emitted at the output root.
+    pub ledger: Option<crate::coverage::Ledger>,
 }
 
 /// Render a complete set of Markdown files to the output directory.
@@ -162,6 +168,7 @@ mod tests {
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -189,6 +196,7 @@ mod tests {
             no_details: false,
             title_override: Some("My Custom Title".into()),
             docfx: false,
+            ledger: None,
         };
         let index = render_index(&items, &symbols, &options, "");
         assert!(
@@ -205,6 +213,7 @@ mod tests {
             no_details: true,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         let tmpdir = std::env::temp_dir().join("pretty_specs_test_nodetails");
         let _ = stdfs::remove_dir_all(&tmpdir);
@@ -240,6 +249,7 @@ property P99_TemptingButFalse x = x > 0
             no_details: false,
             title_override: None,
             docfx: false,
+            ledger: None,
         };
         render_multi_file(&items, &symbols, &tmpdir, &options).unwrap();
 
