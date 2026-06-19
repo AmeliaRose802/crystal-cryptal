@@ -155,6 +155,104 @@ fn excluded_helper_is_dropped_and_counted() {
     assert_eq!(ledger.excluded, vec!["to_lower".to_string()]);
 }
 
+fn mk_private_fn(name: &str, doc: &[&str]) -> Item {
+    Item::Function {
+        name: name.into(),
+        signature: "Bit -> Bit".into(),
+        branches: vec![],
+        body: format!("{name} x = x"),
+        doc: doc.iter().map(|s| s.to_string()).collect(),
+        proof_status: None,
+        is_private: true,
+    }
+}
+
+#[test]
+fn in_spec_directive_includes_private_fn_as_trusted() {
+    // A private model helper is normally hidden from the ledger, but an
+    // explicit `@coverage trusted` directive opts it back in with the 🔒 badge
+    // (so the home table shows the override instead of a bare dash).
+    let items = vec![mk_private_fn(
+        "hmacSha256",
+        &["@coverage trusted: real SHA-256 is not proven here."],
+    )];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+    let e = ledger.lookup("hmacSha256").expect("opted in via directive");
+    assert_eq!(e.badge, CoverageBadge::TrustedAssumption);
+    assert_eq!(
+        e.assumption_note.as_deref(),
+        Some("real SHA-256 is not proven here.")
+    );
+}
+
+#[test]
+fn in_spec_directive_abstraction_kind() {
+    let items = vec![mk_private_fn(
+        "canonLenPrefixed",
+        &["@coverage abstraction: bounded fixed-width encoder model."],
+    )];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+    let e = ledger.lookup("canonLenPrefixed").unwrap();
+    assert_eq!(e.badge, CoverageBadge::AbiAdapter);
+    assert_eq!(
+        e.abstraction_note.as_deref(),
+        Some("bounded fixed-width encoder model.")
+    );
+}
+
+#[test]
+fn in_spec_directive_exclude_drops_function() {
+    let items = vec![mk_private_fn("packPad", &["@coverage exclude"])];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+    assert!(ledger.lookup("packPad").is_none());
+    assert_eq!(ledger.excluded, vec!["packPad".to_string()]);
+}
+
+#[test]
+fn private_fn_without_directive_stays_hidden() {
+    let items = vec![mk_private_fn("internalHelper", &["just a helper"])];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+    assert!(ledger.lookup("internalHelper").is_none());
+}
+
+#[test]
+fn directive_parses_spec_only_without_note() {
+    let d = parse_coverage_directive(&["@coverage spec-only".to_string()]).unwrap();
+    assert_eq!(d.kind, DirectiveKind::SpecOnly);
+    assert!(d.note.is_none());
+}
+
+#[test]
+fn directive_ignores_unknown_kind() {
+    assert!(parse_coverage_directive(&["@coverage bogus: x".to_string()]).is_none());
+}
+
+#[test]
+fn directive_line_predicate_matches_leading_whitespace() {
+    assert!(is_coverage_directive_line("   @coverage trusted"));
+    assert!(!is_coverage_directive_line("not a @coverage directive"));
+}
+
 #[test]
 fn render_matrix_emits_all_sections() {
     let items = vec![

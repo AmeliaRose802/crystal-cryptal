@@ -104,6 +104,78 @@ impl CoverageReason {
     }
 }
 
+/// The doc-comment tag that introduces an in-spec coverage directive.
+const DIRECTIVE_TAG: &str = "@coverage";
+
+/// True when a rendered doc line is a `@coverage …` directive. Callers in the
+/// Markdown renderer use this to hide the directive from displayed prose — the
+/// resulting badge and per-page banner already convey its meaning.
+pub fn is_coverage_directive_line(line: &str) -> bool {
+    line.trim_start()
+        .to_ascii_lowercase()
+        .starts_with(DIRECTIVE_TAG)
+}
+
+/// The classification a `@coverage` directive maps to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectiveKind {
+    /// 🔒 Trusted assumption (deliberate override / uninterpreted primitive).
+    Trusted,
+    /// 🧩 ABI adapter / model abstraction / stand-in.
+    Abstraction,
+    /// 📄 Spec-only reference function with no implementation.
+    SpecOnly,
+    /// Drop the function from the matrix entirely.
+    Exclude,
+}
+
+/// A parsed `@coverage <kind>[: note]` directive.
+#[derive(Debug, Clone)]
+pub(crate) struct CoverageDirective {
+    pub kind: DirectiveKind,
+    pub note: Option<String>,
+}
+
+/// Parse the first `@coverage …` directive out of a function's doc comment.
+///
+/// Recognised forms (case-insensitive, note optional):
+///
+/// ```text
+/// @coverage trusted: real SHA-256 is not proven here.
+/// @coverage abstraction: bounded fixed-width encoder model.
+/// @coverage spec-only
+/// @coverage exclude
+/// ```
+///
+/// Kind aliases: `trusted`/`assumption`/`override`, `abstraction`/`adapter`/
+/// `abi`/`stand-in`, `spec-only`/`spec_only`/`spec`, `exclude`/`internal`.
+/// An unrecognised kind token is ignored (the next directive line, if any, is
+/// tried) so a typo degrades to "no directive" rather than a wrong badge.
+pub(crate) fn parse_coverage_directive(doc: &[String]) -> Option<CoverageDirective> {
+    for line in doc {
+        if !is_coverage_directive_line(line) {
+            continue;
+        }
+        let body = line.trim_start()[DIRECTIVE_TAG.len()..].trim_start();
+        let (kind_tok, note) = match body.split_once(':') {
+            Some((k, n)) => {
+                let n = n.trim();
+                (k.trim(), (!n.is_empty()).then(|| n.to_string()))
+            }
+            None => (body.trim(), None),
+        };
+        let kind = match kind_tok.to_ascii_lowercase().as_str() {
+            "trusted" | "assumption" | "override" => DirectiveKind::Trusted,
+            "abstraction" | "adapter" | "abi" | "stand-in" => DirectiveKind::Abstraction,
+            "spec-only" | "spec_only" | "speconly" | "spec" => DirectiveKind::SpecOnly,
+            "exclude" | "excluded" | "internal" => DirectiveKind::Exclude,
+            _ => continue,
+        };
+        return Some(CoverageDirective { kind, note });
+    }
+    None
+}
+
 /// Which side(s) of the (Implementation ∪ Model) union an entry came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerSource {
@@ -175,12 +247,17 @@ pub fn build_ledger(
     // across modules are rare in this codebase and would shadow each other
     // anyway.
     let mut model_fns: BTreeMap<String, ModelFn> = BTreeMap::new();
+    // In-spec `@coverage …` directives parsed from each function's doc comment,
+    // keyed by function name. These are authorial classification overrides that
+    // live next to the model definition (see `parse_coverage_directive`).
+    let mut directives: BTreeMap<String, CoverageDirective> = BTreeMap::new();
     for (module_name, prefix, items) in modules {
         for item in items.iter() {
             if let Item::Function {
                 name,
                 signature,
                 branches,
+                doc,
                 is_private,
                 proof_status,
                 ..
@@ -192,8 +269,16 @@ pub fn build_ledger(
                 if !signature.contains("->") && branches.is_empty() {
                     continue;
                 }
-                if *is_private {
+                let directive = parse_coverage_directive(doc);
+                // Private model helpers are normally hidden from the ledger.
+                // An explicit in-spec `@coverage` directive opts them back in,
+                // so deliberate overrides (e.g. `hmacSha256`) render their real
+                // badge instead of a bare dash on the home table.
+                if *is_private && directive.is_none() {
                     continue;
+                }
+                if let Some(d) = directive {
+                    directives.entry(name.clone()).or_insert(d);
                 }
                 model_fns.entry(name.clone()).or_insert(ModelFn {
                     module: module_name.clone(),
@@ -226,7 +311,10 @@ pub fn build_ledger(
     // Model side first, so a name that is in both model and inventory
     // gets the model attribution (module + page link).
     for (name, mf) in &model_fns {
-        if config.is_excluded(name) {
+        let directive = directives.get(name);
+        if config.is_excluded(name)
+            || matches!(directive.map(|d| d.kind), Some(DirectiveKind::Exclude))
+        {
             excluded.push(name.clone());
             seen.insert(name.clone());
             continue;
@@ -237,8 +325,18 @@ pub fn build_ledger(
         } else {
             LedgerSource::ModelOnly
         };
-        let badge = classify(name, Some(&mf.proof), inv, config);
+        let badge = classify(name, Some(&mf.proof), inv, config, directive);
         let reason_codes = collect_reason_codes(name, inv, config, false);
+        // An in-spec directive note feeds the per-page banner, falling back to
+        // any `coverage.toml` note for the same function.
+        let directive_assumption = directive.and_then(|d| match d.kind {
+            DirectiveKind::Trusted => d.note.clone(),
+            _ => None,
+        });
+        let directive_abstraction = directive.and_then(|d| match d.kind {
+            DirectiveKind::Abstraction => d.note.clone(),
+            _ => None,
+        });
         entries.push(LedgerEntry {
             name: name.clone(),
             source,
@@ -251,8 +349,14 @@ pub fn build_ledger(
             models: inv.and_then(|e| e.models.clone()),
             models_note: inv.and_then(|e| e.models_note.clone()),
             composes: inv.map(|e| e.composes.clone()).unwrap_or_default(),
-            abstraction_note: config.abstraction_note(name).map(|s| s.to_string()),
-            assumption_note: config.assumption_note(name).map(|s| s.to_string()),
+            abstraction_note: config
+                .abstraction_note(name)
+                .map(|s| s.to_string())
+                .or(directive_abstraction),
+            assumption_note: config
+                .assumption_note(name)
+                .map(|s| s.to_string())
+                .or(directive_assumption),
             stands_in_for: modeled_by.get(name).cloned().unwrap_or_default(),
             reason_codes,
             proof: mf.proof.clone(),
@@ -269,7 +373,7 @@ pub fn build_ledger(
             excluded.push(name.clone());
             continue;
         }
-        let badge = classify(name, None, Some(entry), config);
+        let badge = classify(name, None, Some(entry), config, None);
         let reason_codes = collect_reason_codes(name, Some(entry), config, true);
         entries.push(LedgerEntry {
             name: name.clone(),
@@ -320,7 +424,20 @@ fn classify(
     proof: Option<&Option<ProofStatus>>,
     inventory: Option<&InventoryEntry>,
     config: &CoverageConfig,
+    directive: Option<&CoverageDirective>,
 ) -> CoverageBadge {
+    // An in-spec `@coverage` directive (authorial, co-located with the model
+    // definition) wins, on par with a `coverage.toml` override.
+    if let Some(d) = directive {
+        match d.kind {
+            DirectiveKind::SpecOnly => return CoverageBadge::SpecOnly,
+            DirectiveKind::Trusted => return CoverageBadge::TrustedAssumption,
+            DirectiveKind::Abstraction => return CoverageBadge::AbiAdapter,
+            // Exclusion is handled before `classify` is reached.
+            DirectiveKind::Exclude => {}
+        }
+    }
+
     // Explicit overrides win.
     if config.is_spec_only(name) {
         return CoverageBadge::SpecOnly;
