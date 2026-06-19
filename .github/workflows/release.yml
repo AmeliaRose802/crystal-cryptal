@@ -56,6 +56,7 @@ jobs:
     name: Build (${{ matrix.target }})
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +64,10 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          - os: macos-13
+          # Both macOS targets build on the Apple-silicon runner; the Intel
+          # binary is cross-compiled. The dedicated `macos-13` Intel runner is
+          # effectively unavailable and would hang the job for 24h.
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: macos-latest
