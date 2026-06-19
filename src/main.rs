@@ -23,7 +23,7 @@ use cli::functions::run_emit_function_list;
 use cli::saw_adapt::{run_adapt_saw_results, run_saw_log_adapter};
 
 #[derive(Parser, Debug)]
-#[command(name = "pretty-specs", about = "Cryptol-to-Markdown renderer")]
+#[command(name = "pretty-specs", version, about = "Cryptol-to-Markdown renderer")]
 struct Cli {
     /// Path(s) to .cry input files or directories containing .cry files
     inputs: Vec<PathBuf>,
