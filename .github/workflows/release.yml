@@ -1,9 +1,19 @@
 name: Release
 
-# Triggers on every push to master (i.e. every merged PR). The `check-version`
-# job reads the version from Cargo.toml and skips the rest of the workflow
-# when a GitHub release for that tag already exists, so only commits that
-# actually bump `package.version` produce a release.
+# Triggers on every push to master (i.e. every merged PR). The `version` job
+# derives the next semantic version from the Conventional Commit messages added
+# since the last release tag, bumps `package.version` in Cargo.toml/Cargo.lock,
+# commits that bump back to master and creates the `vX.Y.Z` tag. The build and
+# release jobs then build from that tag and publish the GitHub Release.
+#
+# Bump rules (highest match wins across all commits since the last tag):
+#   * major  -> a commit with `type!:` or a `BREAKING CHANGE` footer
+#   * minor  -> any `feat:` commit
+#   * patch  -> any `fix:`, `perf:` or `refactor:` commit
+#   * none   -> only chore/docs/ci/style/test commits; no release is cut
+#
+# The bump commit itself is subject-tagged `chore(release):` so the workflow
+# skips it (and `[skip ci]` keeps other workflows from running on it).
 on:
   push:
     branches: [master]
@@ -16,46 +26,107 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check-version:
-    name: Check version
+  version:
+    name: Compute next version
     runs-on: ubuntu-latest
+    # Never react to our own release bump commit (prevents an infinite loop).
+    if: ${{ !contains(github.event.head_commit.message, 'chore(release):') }}
     outputs:
-      version: ${{ steps.read.outputs.version }}
-      tag: ${{ steps.read.outputs.tag }}
-      should_release: ${{ steps.exists.outputs.should_release }}
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      should_release: ${{ steps.bump.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags are needed to find the last release and the
+          # commit range since it.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read version from Cargo.toml
-        id: read
+      - name: Determine and apply next version
+        id: bump
         run: |
-          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
-          if [ -z "$version" ]; then
-            echo "::error::Could not read package.version from Cargo.toml"
+          set -euo pipefail
+
+          current=$(grep -m1 '^version' Cargo.toml | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+          echo "Current Cargo.toml version: $current"
+
+          last_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)
+          if [ -z "$last_tag" ]; then
+            echo "No previous release tag found; basing version off Cargo.toml."
+            base="$current"
+            log=$(git log --format='%B%n--%n')
+          else
+            echo "Last release tag: $last_tag"
+            base="${last_tag#v}"
+            log=$(git log --format='%B%n--%n' "${last_tag}..HEAD")
+          fi
+
+          if [ -z "${log//[[:space:]]/}" ]; then
+            echo "No new commits since ${last_tag:-start}; nothing to release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Decide the bump level from Conventional Commit subjects/footers.
+          bump="none"
+          if printf '%s\n' "$log" | grep -Eq 'BREAKING CHANGE' \
+            || printf '%s\n' "$log" | grep -Eq '^[a-zA-Z]+(\([^)]*\))?!:'; then
+            bump="major"
+          elif printf '%s\n' "$log" | grep -Eq '^feat(\([^)]*\))?:'; then
+            bump="minor"
+          elif printf '%s\n' "$log" | grep -Eq '^(fix|perf|refactor)(\([^)]*\))?:'; then
+            bump="patch"
+          fi
+          echo "Computed bump level: $bump"
+
+          if [ "$bump" = "none" ]; then
+            echo "No release-worthy commits (feat/fix/perf/refactor/breaking); skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$base"
+          case "$bump" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          new="${MAJOR}.${MINOR}.${PATCH}"
+          tag="v${new}"
+          echo "Next version: $new ($tag)"
+
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists; refusing to overwrite."
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "Detected version: $version (tag v$version)"
 
-      - name: Check whether tag already exists
-        id: exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.read.outputs.tag }}
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Release $TAG does not exist; will build and publish."
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          fi
+          # Apply the bump to Cargo.toml (first version line = package version).
+          sed -i -E "0,/^version = \"[^\"]+\"/ s//version = \"$new\"/" Cargo.toml
+
+          # Keep Cargo.lock's own package entry in sync without touching deps.
+          awk -v ver="$new" '
+            /^name = "pretty-specs"$/ { inpkg = 1 }
+            inpkg && /^version = / { sub(/"[^"]*"/, "\"" ver "\""); inpkg = 0 }
+            { print }
+          ' Cargo.lock > Cargo.lock.tmp && mv Cargo.lock.tmp Cargo.lock
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): $tag [skip ci]"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin HEAD:master
+          git push origin "$tag"
+
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.target }})
-    needs: check-version
-    if: needs.check-version.outputs.should_release == 'true'
+    needs: version
+    if: needs.version.outputs.should_release == 'true'
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -79,6 +150,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -95,7 +168,7 @@ jobs:
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          version="${{ needs.check-version.outputs.version }}"
+          version="${{ needs.version.outputs.version }}"
           name="pretty-specs-v${version}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/pretty-specs" "dist/$name/"
@@ -110,7 +183,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $version = "${{ needs.check-version.outputs.version }}"
+          $version = "${{ needs.version.outputs.version }}"
           $name = "pretty-specs-v$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/pretty-specs.exe" "dist/$name/"
@@ -127,11 +200,13 @@ jobs:
 
   release:
     name: Publish release
-    needs: [check-version, build]
-    if: needs.check-version.outputs.should_release == 'true'
+    needs: [version, build]
+    if: needs.version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -144,7 +219,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.check-version.outputs.tag }}
-          name: ${{ needs.check-version.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
           generate_release_notes: true
           files: dist/*

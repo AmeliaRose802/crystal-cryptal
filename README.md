@@ -243,6 +243,24 @@ powershell -File .githooks/pre-commit.ps1
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same
 checks on both Linux and Windows.
 
+## Releases
+
+Releases are cut automatically. On every push to `master`, the release
+workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+reads the [Conventional Commit](https://www.conventionalcommits.org) messages
+since the last `vX.Y.Z` tag and bumps the version accordingly:
+
+| Commit since last release            | Version bump |
+| ------------------------------------ | ------------ |
+| `type!:` or `BREAKING CHANGE` footer | major        |
+| `feat:`                              | minor        |
+| `fix:` / `perf:` / `refactor:`       | patch        |
+| only `chore` / `docs` / `ci` / …     | no release   |
+
+The workflow commits the new version back to `Cargo.toml` (and `Cargo.lock`),
+tags it, then builds and publishes per-platform binaries as a GitHub Release.
+No manual version edits are needed.
+
 ## License
 
 See [Cargo.toml](Cargo.toml) for package metadata.
