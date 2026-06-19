@@ -4,10 +4,10 @@ use std::fmt::Write as FmtWrite;
 
 use crate::ir::ProofStatus;
 
-use super::ledger::{CoverageBadge, Ledger, LedgerEntry, LedgerSource};
+use super::ledger::{CoverageBadge, CoverageReason, Ledger, LedgerEntry, LedgerSource};
 
 /// Title-line badge for a function page. When a ledger is present and
-/// covers `name`, returns the new five-emoji badge; otherwise falls back
+/// covers `name`, returns the new coverage badge; otherwise falls back
 /// to the legacy `✓ / ✗ / ~ / ""` glyph derived from `proof`.
 pub fn function_title_badge(
     ledger: Option<&Ledger>,
@@ -47,7 +47,8 @@ pub fn function_banner(ledger: Option<&Ledger>, name: &str) -> Option<String> {
     let body = match entry.badge {
         CoverageBadge::Proven => return None,
         CoverageBadge::ProvenBounded => bounded_banner(entry),
-        CoverageBadge::ModelAbstraction => abstraction_banner(entry),
+        CoverageBadge::TrustedAssumption => trusted_assumption_banner(entry),
+        CoverageBadge::AbiAdapter => abstraction_banner(entry),
         CoverageBadge::Unverified => unverified_banner(entry),
         CoverageBadge::SpecOnly => spec_only_banner(entry),
     };
@@ -84,6 +85,35 @@ fn abstraction_banner(entry: &LedgerEntry) -> String {
     )
 }
 
+fn trusted_assumption_banner(entry: &LedgerEntry) -> String {
+    let note = entry
+        .assumption_note
+        .as_deref()
+        .unwrap_or("This primitive is treated as a trusted external dependency.");
+    let stand_in_for = if entry.stands_in_for.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " Stands in for real function{plural}: {names}.",
+            plural = if entry.stands_in_for.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            names = entry
+                .stands_in_for
+                .iter()
+                .map(|n| format!("`{n}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "🔒 **Trusted assumption — not proven here.** {note}{stand_in_for} \
+         Any proof that depends on this definition inherits that assumption."
+    )
+}
+
 fn unverified_banner(entry: &LedgerEntry) -> String {
     let where_str = entry
         .impl_file
@@ -97,10 +127,18 @@ fn unverified_banner(entry: &LedgerEntry) -> String {
         Some(ProofStatus::NotAttempted) => " Proof has not been attempted yet.".to_string(),
         _ => String::new(),
     };
+    let reason_str = if entry.reason_codes.is_empty() {
+        "".to_string()
+    } else {
+        format!(
+            " Reason code(s): {}.",
+            reason_codes_inline(&entry.reason_codes)
+        )
+    };
     format!(
         "⚠️ **Implemented, unverified.** This function exists in the \
          codebase but **no machine-checked equivalence proof** has been \
-         discharged.{where_str}{proof_str}"
+         discharged.{where_str}{reason_str}{proof_str}"
     )
 }
 
@@ -150,7 +188,8 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
     let total = ledger.entries.len();
     let n_proven = ledger.count(CoverageBadge::Proven);
     let n_bounded = ledger.count(CoverageBadge::ProvenBounded);
-    let n_abs = ledger.count(CoverageBadge::ModelAbstraction);
+    let n_trusted = ledger.count(CoverageBadge::TrustedAssumption);
+    let n_abs = ledger.count(CoverageBadge::AbiAdapter);
     let n_unv = ledger.count(CoverageBadge::Unverified);
     let n_spec = ledger.count(CoverageBadge::SpecOnly);
 
@@ -173,8 +212,15 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
     let _ = writeln!(
         out,
         "| {} | {} | {} |",
-        CoverageBadge::ModelAbstraction.emoji(),
-        CoverageBadge::ModelAbstraction.label(),
+        CoverageBadge::TrustedAssumption.emoji(),
+        CoverageBadge::TrustedAssumption.label(),
+        n_trusted
+    );
+    let _ = writeln!(
+        out,
+        "| {} | {} | {} |",
+        CoverageBadge::AbiAdapter.emoji(),
+        CoverageBadge::AbiAdapter.label(),
         n_abs
     );
     let _ = writeln!(
@@ -209,7 +255,8 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
         CoverageBadge::Unverified,
         CoverageBadge::ProvenBounded,
         CoverageBadge::Proven,
-        CoverageBadge::ModelAbstraction,
+        CoverageBadge::TrustedAssumption,
+        CoverageBadge::AbiAdapter,
         CoverageBadge::SpecOnly,
     ] {
         let rows: Vec<&LedgerEntry> = ledger.entries.iter().filter(|e| e.badge == badge).collect();
@@ -218,16 +265,23 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
         }
         let _ = writeln!(out, "## {} {}\n", badge.emoji(), badge.label());
         let _ = writeln!(out, "{}\n", section_lede(badge));
-        let _ = writeln!(out, "| Function | Source | Maps to | Notes |");
-        let _ = writeln!(out, "|----------|--------|---------|-------|");
+        let _ = writeln!(
+            out,
+            "| Function | Source | Maps to | Reason codes | Notes |"
+        );
+        let _ = writeln!(
+            out,
+            "|----------|--------|---------|--------------|-------|"
+        );
         for entry in rows {
             let function_cell = function_link(entry);
             let source_cell = source_cell(entry);
             let maps_cell = maps_cell(entry);
+            let reason_cell = reason_codes_cell(entry);
             let notes_cell = notes_cell(entry);
             let _ = writeln!(
                 out,
-                "| {function_cell} | {source_cell} | {maps_cell} | {notes_cell} |"
+                "| {function_cell} | {source_cell} | {maps_cell} | {reason_cell} | {notes_cell} |"
             );
         }
         out.push('\n');
@@ -261,7 +315,11 @@ fn section_lede(badge: CoverageBadge) -> &'static str {
             "Equivalence proven only up to an iteration / size bound. The \
              general-`n` case is a prose structural argument."
         }
-        CoverageBadge::ModelAbstraction => {
+        CoverageBadge::TrustedAssumption => {
+            "Assumed contracts for real external dependencies. These are \
+             explicit trust boundaries, not machine-checked equivalence proofs."
+        }
+        CoverageBadge::AbiAdapter => {
             "Cryptol definitions with no real-code counterpart \
              (placeholders, uninterpreted functions, ABI adapters). The \
              notes column explains what each one stands in for."
@@ -318,6 +376,14 @@ fn maps_cell(entry: &LedgerEntry) -> String {
         let composed: Vec<String> = entry.composes.iter().map(|c| format!("`{c}`")).collect();
         parts.push(format!("composes {}", composed.join(", ")));
     }
+    if !entry.stands_in_for.is_empty() {
+        let standins: Vec<String> = entry
+            .stands_in_for
+            .iter()
+            .map(|c| format!("`{c}`"))
+            .collect();
+        parts.push(format!("stands in for {}", standins.join(", ")));
+    }
     if parts.is_empty() {
         "—".to_string()
     } else {
@@ -325,9 +391,27 @@ fn maps_cell(entry: &LedgerEntry) -> String {
     }
 }
 
+fn reason_codes_cell(entry: &LedgerEntry) -> String {
+    if entry.reason_codes.is_empty() {
+        return "—".to_string();
+    }
+    reason_codes_inline(&entry.reason_codes)
+}
+
+fn reason_codes_inline(codes: &[CoverageReason]) -> String {
+    codes
+        .iter()
+        .map(|r| format!("`{} {}`", r.code(), r.short_label()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn notes_cell(entry: &LedgerEntry) -> String {
     let mut parts = Vec::new();
     if let Some(note) = &entry.abstraction_note {
+        parts.push(escape_cell(note));
+    }
+    if let Some(note) = &entry.assumption_note {
         parts.push(escape_cell(note));
     }
     if let Some(file) = &entry.impl_file {

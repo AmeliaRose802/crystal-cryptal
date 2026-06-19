@@ -43,12 +43,13 @@ pub(super) fn render_index(
         let unverified = ledger.count(crate::coverage::CoverageBadge::Unverified);
         let proven = ledger.count(crate::coverage::CoverageBadge::Proven);
         let bounded = ledger.count(crate::coverage::CoverageBadge::ProvenBounded);
-        let abs = ledger.count(crate::coverage::CoverageBadge::ModelAbstraction);
+        let trusted = ledger.count(crate::coverage::CoverageBadge::TrustedAssumption);
+        let abs = ledger.count(crate::coverage::CoverageBadge::AbiAdapter);
         let spec = ledger.count(crate::coverage::CoverageBadge::SpecOnly);
         let _ = writeln!(out, "## Coverage at a glance\n");
         let _ = writeln!(
             out,
-            "✅ {proven} proven · 🔲 {bounded} bounded · 🧩 {abs} abstractions · ⚠️ {unverified} **unverified** · 📄 {spec} spec-only\n"
+            "✅ {proven} proven · 🔲 {bounded} bounded · 🔒 {trusted} trusted assumptions · 🧩 {abs} adapters/stand-ins · ⚠️ {unverified} **unverified** · 📄 {spec} spec-only\n"
         );
         let _ = writeln!(
             out,

@@ -7,13 +7,22 @@
 # relevant. Counted as a footnote on the matrix, not as gaps.
 functions = ["to_lower", "trim"]
 
+[assumption]
+# Trusted external contracts. These are 🔒 trust boundaries, not proofs.
+hmacSha256       = "Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here."
+isValidSignature = "Trusted signature-validity contract; production verifier is not proven equivalent here."
+
 [abstraction]
-# Cryptol definitions with no real implementation counterpart. Each entry
-# is shown as a 🧩 banner on its function page.
-hmacSha256       = "Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified."
-isValidSignature = "Constant-time comparison contract; the production constant-time-equals helper is unverified."
+# Modeling-only ABI adapters / bounded stand-ins (🧩).
 canonLenPrefixed = "Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified."
 
 [spec_only]
 # Lives in the model on purpose (gap-exhibiting reference functions).
 functions = []
+
+[reason_codes]
+canonicalize_lp = ["R1"]
+canonicalizePayload = ["R2", "R1"]
+hmac_sha256 = ["R2"]
+sha256 = ["R1"]
+handle_provision = ["R6"]

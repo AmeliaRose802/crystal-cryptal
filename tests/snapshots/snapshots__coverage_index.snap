@@ -1,12 +1,13 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 255
 expression: content
 ---
 # SDEP
 
 ## Coverage at a glance
 
-✅ 0 proven · 🔲 0 bounded · 🧩 3 abstractions · ⚠️ 20 **unverified** · 📄 0 spec-only
+✅ 0 proven · 🔲 0 bounded · 🔒 2 trusted assumptions · 🧩 1 adapters/stand-ins · ⚠️ 6 **unverified** · 📄 14 spec-only
 
 See the full breakdown — including every real function the codebase contains, whether or not it was modeled — on the [Coverage Matrix](coverage.md). Pages here that carry a 🧩, 🔲, or ⚠️ badge surface the caveat in a banner at the top.
 
@@ -29,21 +30,21 @@ All type definitions: [types.md](types.md)
 | Function | Status | Description |
 |----------|--------|-------------|
 | [provisionKey](functions/provisionKey.md) | ⚠️ Implemented, unverified | Evaluates 5 conditions on `fleetEnabled`, `validRequest`, `vaultResult`, and `keyIsActive` in priority order, returning the first applicable `ProvisionResult`. Defaults to `PR_Succeeded` when no prior condition matches. |
-| [enrollDevice](functions/enrollDevice.md) | ⚠️ Implemented, unverified | Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `EnrollmentResult`. Defaults to `ER_Unauthorized` when no prior condition matches. |
-| [authenticate](functions/authenticate.md) | ⚠️ Implemented, unverified | Returns `True` only when all of `dateValid`, `signatureValid`, and `claimsValid` are true. |
-| [isValidRequestDate](functions/isValidRequestDate.md) | ⚠️ Implemented, unverified | Checks whether the request date is valid: validates a bounded condition over `requestTs`, `currentTime`, and `windowSeconds`. |
-| [hmacSha256](functions/hmacSha256.md) | 🧩 Model abstraction | Uninterpreted in proofs (SAW can treat this as a Cryptol primitive). |
-| [isValidSignature](functions/isValidSignature.md) | 🧩 Model abstraction | Checks whether the signature is valid by comparing the computed and expected values. |
-| [enforceAccess](functions/enforceAccess.md) | ⚠️ Implemented, unverified | Evaluates 6 conditions on `mode` and `decision` in priority order, returning the first applicable a tuple. Defaults to `(True, False)` when no prior condition matches. |
-| [getStatus](functions/getStatus.md) | ⚠️ Implemented, unverified | Constructs `EnrollmentStatus` from the given inputs. |
-| [canonNormalized](functions/canonNormalized.md) | ⚠️ Implemented, unverified | A field is normalized iff bytes at indices >= n are zero. This is the invariant the C++ / Rust code maintains implicitly (it only reads the first n bytes); making it explicit keeps logically-distinct requests distinct as Cryptol values, so any collision the solver finds is a *real* one. |
-| [canonLenPrefixed](functions/canonLenPrefixed.md) | 🧩 Model abstraction | Length-prefixed canonicalization. Each variable-length field is preceded by its length tag: a parser reads the tag, then exactly that many bytes, then the next tag, then exactly that many bytes. No byte inside any field can be misread as a boundary, so the encoding is structurally injective. |
-| [fieldNormalized](functions/fieldNormalized.md) | ⚠️ Implemented, unverified | Compares computed and provided values over `f`, returning `True` on match. |
-| [requestNormalized](functions/requestNormalized.md) | ⚠️ Implemented, unverified | Tests whether `r` is well-formed. |
-| [lpField](functions/lpField.md) | ⚠️ Implemented, unverified | Length-prefix a Field as [len-byte] # buf. |
-| [lpHeader](functions/lpHeader.md) | ⚠️ Implemented, unverified | Length-prefix a header pair OR emit a constant-size all-zero placeholder if it is the auth header. Fixed output size keeps canonicalizeS Cryptol- statable; the placeholder content is irrelevant because the encoder elides auth headers regardless of their value. |
-| [canonicalizeS](functions/canonicalizeS.md) | ⚠️ Implemented, unverified | Concrete canonicalize: length-prefixed method, body, headers (with auth-header exclusion), path, then the 8-byte big-endian timestamp. |
-| [verifierTimestamp_current](functions/verifierTimestamp_current.md) | ⚠️ Implemented, unverified | The timestamp the verifier validates must equal the timestamp inside the signed request — otherwise an attacker can replay a stale signed request with a fresh "current time" supplied by the caller and pass the freshness check despite the signature being over old bytes. |
+| [enrollDevice](functions/enrollDevice.md) | 📄 Spec-only | Evaluates 7 conditions on `fleetEnabled`, `validMetadata`, `authResult`, and `activationResult` in priority order, returning the first applicable `EnrollmentResult`. Defaults to `ER_Unauthorized` when no prior condition matches. |
+| [authenticate](functions/authenticate.md) | 📄 Spec-only | Returns `True` only when all of `dateValid`, `signatureValid`, and `claimsValid` are true. |
+| [isValidRequestDate](functions/isValidRequestDate.md) | 📄 Spec-only | Checks whether the request date is valid: validates a bounded condition over `requestTs`, `currentTime`, and `windowSeconds`. |
+| [hmacSha256](functions/hmacSha256.md) | 🔒 Trusted assumption | Uninterpreted in proofs (SAW can treat this as a Cryptol primitive). |
+| [isValidSignature](functions/isValidSignature.md) | 🔒 Trusted assumption | Checks whether the signature is valid by comparing the computed and expected values. |
+| [enforceAccess](functions/enforceAccess.md) | 📄 Spec-only | Evaluates 6 conditions on `mode` and `decision` in priority order, returning the first applicable a tuple. Defaults to `(True, False)` when no prior condition matches. |
+| [getStatus](functions/getStatus.md) | 📄 Spec-only | Constructs `EnrollmentStatus` from the given inputs. |
+| [canonNormalized](functions/canonNormalized.md) | 📄 Spec-only | A field is normalized iff bytes at indices >= n are zero. This is the invariant the C++ / Rust code maintains implicitly (it only reads the first n bytes); making it explicit keeps logically-distinct requests distinct as Cryptol values, so any collision the solver finds is a *real* one. |
+| [canonLenPrefixed](functions/canonLenPrefixed.md) | 🧩 ABI adapter / stand-in | Length-prefixed canonicalization. Each variable-length field is preceded by its length tag: a parser reads the tag, then exactly that many bytes, then the next tag, then exactly that many bytes. No byte inside any field can be misread as a boundary, so the encoding is structurally injective. |
+| [fieldNormalized](functions/fieldNormalized.md) | 📄 Spec-only | Compares computed and provided values over `f`, returning `True` on match. |
+| [requestNormalized](functions/requestNormalized.md) | 📄 Spec-only | Tests whether `r` is well-formed. |
+| [lpField](functions/lpField.md) | 📄 Spec-only | Length-prefix a Field as [len-byte] # buf. |
+| [lpHeader](functions/lpHeader.md) | 📄 Spec-only | Length-prefix a header pair OR emit a constant-size all-zero placeholder if it is the auth header. Fixed output size keeps canonicalizeS Cryptol- statable; the placeholder content is irrelevant because the encoder elides auth headers regardless of their value. |
+| [canonicalizeS](functions/canonicalizeS.md) | 📄 Spec-only | Concrete canonicalize: length-prefixed method, body, headers (with auth-header exclusion), path, then the 8-byte big-endian timestamp. |
+| [verifierTimestamp_current](functions/verifierTimestamp_current.md) | 📄 Spec-only | The timestamp the verifier validates must equal the timestamp inside the signed request — otherwise an attacker can replay a stale signed request with a fresh "current time" supplied by the caller and pass the freshness check despite the signature being over old bytes. |
 
 Per-function detail pages: [functions](functions/index.md)
 

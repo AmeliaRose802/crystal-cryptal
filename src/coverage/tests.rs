@@ -59,11 +59,24 @@ fn classify_abstraction_via_config() {
         .insert("hmacSha256".into(), "Algebraic placeholder.".into());
     let ledger = build_ledger(&modules, &ImplementationInventory::default(), &cfg);
     let e = ledger.lookup("hmacSha256").unwrap();
-    assert_eq!(e.badge, CoverageBadge::ModelAbstraction);
+    assert_eq!(e.badge, CoverageBadge::AbiAdapter);
     assert_eq!(
         e.abstraction_note.as_deref(),
         Some("Algebraic placeholder.")
     );
+}
+
+#[test]
+fn classify_trusted_assumption_via_config() {
+    let items = vec![mk_fn("hmacSha256", None)];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let mut cfg = CoverageConfig::default();
+    cfg.assumption
+        .insert("hmacSha256".into(), "Trusted primitive.".into());
+    let ledger = build_ledger(&modules, &ImplementationInventory::default(), &cfg);
+    let e = ledger.lookup("hmacSha256").unwrap();
+    assert_eq!(e.badge, CoverageBadge::TrustedAssumption);
+    assert_eq!(e.assumption_note.as_deref(), Some("Trusted primitive."));
 }
 
 #[test]
@@ -110,6 +123,7 @@ fn impl_only_function_shows_up_as_unverified() {
             models: None,
             models_note: None,
             composes: vec![],
+            reason_codes: vec![],
         }],
     };
     let ledger = build_ledger(&[], &inv, &CoverageConfig::default());
@@ -129,6 +143,7 @@ fn excluded_helper_is_dropped_and_counted() {
             models: None,
             models_note: None,
             composes: vec![],
+            reason_codes: vec![],
         }],
     };
     let cfg = CoverageConfig {
@@ -158,14 +173,17 @@ fn render_matrix_emits_all_sections() {
             models: Some("hmacSha256".into()),
             models_note: None,
             composes: vec![],
+            reason_codes: vec!["R2".into()],
         }],
     };
     let cfg = CoverageConfig {
         exclude: vec![],
+        assumption: std::collections::HashMap::new(),
         abstraction: [("hmacSha256".to_string(), "Placeholder.".to_string())]
             .into_iter()
             .collect(),
         spec_only: vec!["secureProvisionKey".into()],
+        reason_codes: std::collections::HashMap::new(),
     };
     let ledger = build_ledger(&modules, &inv, &cfg);
     let md = render_coverage_matrix(&ledger);
@@ -173,7 +191,7 @@ fn render_matrix_emits_all_sections() {
     assert!(md.contains("# Coverage Matrix"));
     assert!(md.contains("✅ Proven"));
     assert!(md.contains("🔲 Proven (bounded)"));
-    assert!(md.contains("🧩 Model abstraction"));
+    assert!(md.contains("🧩 ABI adapter / stand-in"));
     assert!(md.contains("⚠️ Implemented, unverified"));
     assert!(md.contains("📄 Spec-only"));
     assert!(md.contains("sha256"));
@@ -192,8 +210,14 @@ functions = ["to_lower", "trim"]
 [abstraction]
 hmacSha256 = "Not SHA-256."
 
+[assumption]
+isValidSignature = "Trusted external check."
+
 [spec_only]
 functions = ["secureFoo"]
+
+[reason_codes]
+canonicalizePayload = ["r2", "R1"]
 "#,
     )
     .unwrap();
@@ -201,7 +225,15 @@ functions = ["secureFoo"]
     assert!(cfg.is_excluded("to_lower"));
     assert!(cfg.is_excluded("trim"));
     assert_eq!(cfg.abstraction_note("hmacSha256"), Some("Not SHA-256."));
+    assert_eq!(
+        cfg.assumption_note("isValidSignature"),
+        Some("Trusted external check.")
+    );
     assert!(cfg.is_spec_only("secureFoo"));
+    assert_eq!(
+        cfg.reason_codes("canonicalizePayload"),
+        vec!["R2".to_string(), "R1".to_string()]
+    );
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -210,8 +242,10 @@ fn missing_config_file_is_empty_default() {
     let cfg = load_coverage_config(std::path::Path::new("nonexistent_coverage_config.toml"))
         .expect("missing file is ok");
     assert!(cfg.exclude.is_empty());
+    assert!(cfg.assumption.is_empty());
     assert!(cfg.abstraction.is_empty());
     assert!(cfg.spec_only.is_empty());
+    assert!(cfg.reason_codes.is_empty());
 }
 
 #[test]

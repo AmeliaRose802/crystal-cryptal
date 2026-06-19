@@ -15,7 +15,7 @@ mod tests;
 
 pub use config::{CoverageConfig, load_coverage_config};
 pub use inventory::{ImplementationInventory, InventoryEntry, load_inventory};
-pub use ledger::{CoverageBadge, Ledger, LedgerEntry, LedgerSource, build_ledger};
+pub use ledger::{CoverageBadge, CoverageReason, Ledger, LedgerEntry, LedgerSource, build_ledger};
 pub use render::{
     function_banner, function_status_cell, function_title_badge, render_coverage_matrix,
 };

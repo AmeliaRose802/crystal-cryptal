@@ -4,37 +4,43 @@
       "name": "provisionKey",
       "lang": "cpp",
       "symbol": "?provisionKey@sdep@@YAHHHH@Z",
-      "file": "cpp/src/decisions.cpp"
+      "file": "cpp/src/decisions.cpp",
+      "reason_codes": ["R6"]
     },
     {
       "name": "canonicalize_lp",
       "lang": "cpp",
       "file": "cpp/src/canonical.cpp",
       "models": "canonLenPrefixed",
-      "models_note": "bounded model only"
+      "models_note": "bounded model only",
+      "reason_codes": ["R1"]
     },
     {
       "name": "hmac_sha256",
       "lang": "cpp",
       "file": "cpp/src/hmac.cpp",
-      "models": "hmacSha256"
+      "models": "hmacSha256",
+      "reason_codes": ["R2"]
     },
     {
       "name": "sha256",
       "lang": "cpp",
-      "file": "cpp/src/sha256.cpp"
+      "file": "cpp/src/sha256.cpp",
+      "reason_codes": ["R1"]
     },
     {
       "name": "canonicalizePayload",
       "lang": "cpp",
       "file": "cpp/src/canonical.cpp",
       "models": "canonicalize_lp",
-      "models_note": "bounded model only"
+      "models_note": "bounded model only",
+      "reason_codes": ["R2", "R1"]
     },
     {
       "name": "handle_provision",
       "lang": "cpp",
       "file": "cpp/src/controller.cpp",
+      "reason_codes": ["R6"],
       "composes": ["provisionKey"]
     },
     {

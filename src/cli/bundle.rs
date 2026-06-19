@@ -145,13 +145,14 @@ pub(crate) fn render_multi_module_index(
     if let Some(l) = ledger {
         let proven = l.count(CoverageBadge::Proven);
         let bounded = l.count(CoverageBadge::ProvenBounded);
-        let abs = l.count(CoverageBadge::ModelAbstraction);
+        let trusted = l.count(CoverageBadge::TrustedAssumption);
+        let abs = l.count(CoverageBadge::AbiAdapter);
         let unv = l.count(CoverageBadge::Unverified);
         let spec = l.count(CoverageBadge::SpecOnly);
         let _ = writeln!(out, "## Coverage at a glance\n");
         let _ = writeln!(
             out,
-            "✅ {proven} proven · 🔲 {bounded} bounded · 🧩 {abs} abstractions · ⚠️ {unv} **unverified** · 📄 {spec} spec-only\n"
+            "✅ {proven} proven · 🔲 {bounded} bounded · 🔒 {trusted} trusted assumptions · 🧩 {abs} adapters/stand-ins · ⚠️ {unv} **unverified** · 📄 {spec} spec-only\n"
         );
         let _ = writeln!(
             out,
