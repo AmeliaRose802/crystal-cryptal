@@ -2,7 +2,7 @@
 
 use std::fmt::Write as FmtWrite;
 
-use crate::coverage::{function_banner, function_title_badge};
+use crate::coverage::{function_banner, function_title_badge, is_coverage_directive_line};
 use crate::describe::{auto_describe_function, auto_describe_property};
 use crate::ir::Item;
 use crate::linker::SymbolTable;
@@ -177,10 +177,15 @@ pub fn render_single_file(
                     out.push_str(&section);
                 }
 
-                let effective_doc = if doc.is_empty() {
+                let visible_doc: Vec<String> = doc
+                    .iter()
+                    .filter(|l| !is_coverage_directive_line(l))
+                    .cloned()
+                    .collect();
+                let effective_doc = if visible_doc.is_empty() {
                     auto_describe_function(name, signature, branches, body)
                 } else {
-                    doc.clone()
+                    visible_doc
                 };
                 if !effective_doc.is_empty() {
                     render_doc_body(&mut out, &effective_doc, |l| {

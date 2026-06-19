@@ -4,6 +4,10 @@
 // The ledger is the set (Implementation ∪ Model). Each entry is classified
 // into exactly one of five badges. See module docs for the rationale.
 
+mod badge;
+mod classify;
+mod directive;
+
 use std::collections::{BTreeMap, HashSet};
 
 use crate::ir::{Item, ProofStatus};
@@ -11,98 +15,18 @@ use crate::ir::{Item, ProofStatus};
 use super::config::CoverageConfig;
 use super::inventory::{ImplementationInventory, InventoryEntry};
 
-/// Five-state coverage taxonomy. See `01-coverage-clarity.md` at the repo
-/// root for the design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoverageBadge {
-    /// Machine-checked equivalence across **all** ABI inputs.
-    Proven,
-    /// Proven only up to an iteration / size bound (the `iterations`
-    /// metadata on a `ProofStatus::Proven`). The general case is a prose
-    /// argument, not a machine proof.
-    ProvenBounded,
-    /// Assumed contract for a true external primitive/dependency.
-    TrustedAssumption,
-    /// A Cryptol abstraction with no real-code counterpart (placeholder,
-    /// uninterpreted function, or ABI adapter). Carried in
-    /// `coverage.toml [abstraction]`.
-    AbiAdapter,
-    /// Real function in the inventory (or a model function with no proof)
-    /// that has no proof and no exclusion.
-    Unverified,
-    /// Lives in the model on purpose with no implementation (`secure*`
-    /// reference functions, etc.). Carried in
-    /// `coverage.toml [spec_only].functions`.
-    SpecOnly,
-}
+use classify::{badge_order, classify, collect_reason_codes};
+use directive::CoverageDirective;
 
-impl CoverageBadge {
-    pub fn emoji(self) -> &'static str {
-        match self {
-            CoverageBadge::Proven => "✅",
-            CoverageBadge::ProvenBounded => "🔲",
-            CoverageBadge::TrustedAssumption => "🔒",
-            CoverageBadge::AbiAdapter => "🧩",
-            CoverageBadge::Unverified => "⚠️",
-            CoverageBadge::SpecOnly => "📄",
-        }
-    }
+pub use badge::{CoverageBadge, CoverageReason};
+pub use directive::is_coverage_directive_line;
 
-    pub fn label(self) -> &'static str {
-        match self {
-            CoverageBadge::Proven => "Proven",
-            CoverageBadge::ProvenBounded => "Proven (bounded)",
-            CoverageBadge::TrustedAssumption => "Trusted assumption",
-            CoverageBadge::AbiAdapter => "ABI adapter / stand-in",
-            CoverageBadge::Unverified => "Implemented, unverified",
-            CoverageBadge::SpecOnly => "Spec-only",
-        }
-    }
-}
+// Re-exported for `super::DirectiveKind` (used both by `build_ledger` here and,
+// under `#[cfg(test)]`, by the coverage tests).
+pub(crate) use directive::DirectiveKind;
 
-/// Reason codes for ⚠️ implemented-but-unverified entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CoverageReason {
-    R1Unbounded,
-    R2StlHeap,
-    R3Stateful,
-    R4Timing,
-    R6Compositional,
-}
-
-impl CoverageReason {
-    pub fn parse(input: &str) -> Option<Self> {
-        let code = input.trim().to_ascii_uppercase();
-        match code.as_str() {
-            "R1" | "R1_UNBOUNDED" => Some(Self::R1Unbounded),
-            "R2" | "R2_STL_HEAP" | "R2_STL-HEAP" => Some(Self::R2StlHeap),
-            "R3" | "R3_STATEFUL" => Some(Self::R3Stateful),
-            "R4" | "R4_TIMING" => Some(Self::R4Timing),
-            "R6" | "R6_COMPOSITIONAL" => Some(Self::R6Compositional),
-            _ => None,
-        }
-    }
-
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::R1Unbounded => "R1",
-            Self::R2StlHeap => "R2",
-            Self::R3Stateful => "R3",
-            Self::R4Timing => "R4",
-            Self::R6Compositional => "R6",
-        }
-    }
-
-    pub fn short_label(self) -> &'static str {
-        match self {
-            Self::R1Unbounded => "unbounded",
-            Self::R2StlHeap => "stl-heap",
-            Self::R3Stateful => "stateful",
-            Self::R4Timing => "timing",
-            Self::R6Compositional => "compositional",
-        }
-    }
-}
+#[cfg(test)]
+pub(crate) use directive::parse_coverage_directive;
 
 /// Which side(s) of the (Implementation ∪ Model) union an entry came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,12 +99,17 @@ pub fn build_ledger(
     // across modules are rare in this codebase and would shadow each other
     // anyway.
     let mut model_fns: BTreeMap<String, ModelFn> = BTreeMap::new();
+    // In-spec `@coverage …` directives parsed from each function's doc comment,
+    // keyed by function name. These are authorial classification overrides that
+    // live next to the model definition (see `parse_coverage_directive`).
+    let mut directives: BTreeMap<String, CoverageDirective> = BTreeMap::new();
     for (module_name, prefix, items) in modules {
         for item in items.iter() {
             if let Item::Function {
                 name,
                 signature,
                 branches,
+                doc,
                 is_private,
                 proof_status,
                 ..
@@ -192,8 +121,16 @@ pub fn build_ledger(
                 if !signature.contains("->") && branches.is_empty() {
                     continue;
                 }
-                if *is_private {
+                let directive = directive::parse_coverage_directive(doc);
+                // Private model helpers are normally hidden from the ledger.
+                // An explicit in-spec `@coverage` directive opts them back in,
+                // so deliberate overrides (e.g. `hmacSha256`) render their real
+                // badge instead of a bare dash on the home table.
+                if *is_private && directive.is_none() {
                     continue;
+                }
+                if let Some(d) = directive {
+                    directives.entry(name.clone()).or_insert(d);
                 }
                 model_fns.entry(name.clone()).or_insert(ModelFn {
                     module: module_name.clone(),
@@ -226,7 +163,10 @@ pub fn build_ledger(
     // Model side first, so a name that is in both model and inventory
     // gets the model attribution (module + page link).
     for (name, mf) in &model_fns {
-        if config.is_excluded(name) {
+        let directive = directives.get(name);
+        if config.is_excluded(name)
+            || matches!(directive.map(|d| d.kind), Some(DirectiveKind::Exclude))
+        {
             excluded.push(name.clone());
             seen.insert(name.clone());
             continue;
@@ -237,8 +177,18 @@ pub fn build_ledger(
         } else {
             LedgerSource::ModelOnly
         };
-        let badge = classify(name, Some(&mf.proof), inv, config);
+        let badge = classify(name, Some(&mf.proof), inv, config, directive);
         let reason_codes = collect_reason_codes(name, inv, config, false);
+        // An in-spec directive note feeds the per-page banner, falling back to
+        // any `coverage.toml` note for the same function.
+        let directive_assumption = directive.and_then(|d| match d.kind {
+            DirectiveKind::Trusted => d.note.clone(),
+            _ => None,
+        });
+        let directive_abstraction = directive.and_then(|d| match d.kind {
+            DirectiveKind::Abstraction => d.note.clone(),
+            _ => None,
+        });
         entries.push(LedgerEntry {
             name: name.clone(),
             source,
@@ -251,8 +201,14 @@ pub fn build_ledger(
             models: inv.and_then(|e| e.models.clone()),
             models_note: inv.and_then(|e| e.models_note.clone()),
             composes: inv.map(|e| e.composes.clone()).unwrap_or_default(),
-            abstraction_note: config.abstraction_note(name).map(|s| s.to_string()),
-            assumption_note: config.assumption_note(name).map(|s| s.to_string()),
+            abstraction_note: config
+                .abstraction_note(name)
+                .map(|s| s.to_string())
+                .or(directive_abstraction),
+            assumption_note: config
+                .assumption_note(name)
+                .map(|s| s.to_string())
+                .or(directive_assumption),
             stands_in_for: modeled_by.get(name).cloned().unwrap_or_default(),
             reason_codes,
             proof: mf.proof.clone(),
@@ -269,7 +225,7 @@ pub fn build_ledger(
             excluded.push(name.clone());
             continue;
         }
-        let badge = classify(name, None, Some(entry), config);
+        let badge = classify(name, None, Some(entry), config, None);
         let reason_codes = collect_reason_codes(name, Some(entry), config, true);
         entries.push(LedgerEntry {
             name: name.clone(),
@@ -302,91 +258,6 @@ pub fn build_ledger(
     excluded.dedup();
 
     Ledger { entries, excluded }
-}
-
-fn badge_order(b: CoverageBadge) -> u8 {
-    match b {
-        CoverageBadge::Unverified => 0,
-        CoverageBadge::ProvenBounded => 1,
-        CoverageBadge::Proven => 2,
-        CoverageBadge::TrustedAssumption => 3,
-        CoverageBadge::AbiAdapter => 4,
-        CoverageBadge::SpecOnly => 5,
-    }
-}
-
-fn classify(
-    name: &str,
-    proof: Option<&Option<ProofStatus>>,
-    inventory: Option<&InventoryEntry>,
-    config: &CoverageConfig,
-) -> CoverageBadge {
-    // Explicit overrides win.
-    if config.is_spec_only(name) {
-        return CoverageBadge::SpecOnly;
-    }
-    if config.assumption_note(name).is_some() || matches!(proof, Some(Some(ProofStatus::Assumed))) {
-        return CoverageBadge::TrustedAssumption;
-    }
-    if config.abstraction_note(name).is_some() {
-        return CoverageBadge::AbiAdapter;
-    }
-
-    // Proven (bounded or full) outranks everything else for a real claim.
-    if let Some(Some(ProofStatus::Proven { iterations, .. })) = proof {
-        return if iterations.is_some() {
-            CoverageBadge::ProvenBounded
-        } else {
-            CoverageBadge::Proven
-        };
-    }
-
-    // Implementation-side with no proof → unverified.
-    if inventory.is_some() {
-        return CoverageBadge::Unverified;
-    }
-
-    // Model-only function with neither proof nor implementation linkage is
-    // effectively spec-only in this taxonomy.
-    CoverageBadge::SpecOnly
-}
-
-fn collect_reason_codes(
-    name: &str,
-    inventory: Option<&InventoryEntry>,
-    config: &CoverageConfig,
-    allow_composition_fallback: bool,
-) -> Vec<CoverageReason> {
-    let mut out: Vec<CoverageReason> = Vec::new();
-
-    if let Some(entry) = inventory {
-        for code in &entry.reason_codes {
-            if let Some(parsed) = CoverageReason::parse(code)
-                && !out.contains(&parsed)
-            {
-                out.push(parsed);
-            }
-        }
-    }
-
-    for code in config.reason_codes(name) {
-        if let Some(parsed) = CoverageReason::parse(code)
-            && !out.contains(&parsed)
-        {
-            out.push(parsed);
-        }
-    }
-
-    if out.is_empty()
-        && allow_composition_fallback
-        && let Some(entry) = inventory
-        && !entry.composes.is_empty()
-    {
-        out.push(CoverageReason::R6Compositional);
-    }
-
-    out.sort();
-    out
 }
 
 struct ModelFn {

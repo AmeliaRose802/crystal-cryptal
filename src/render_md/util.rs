@@ -35,6 +35,11 @@ pub(super) const TYPE_DOC_INTERNAL_MARKERS: &[&str] = &[
 pub(super) fn first_doc_line(doc: &[String]) -> String {
     let mut parts = Vec::new();
     for line in doc {
+        // In-spec `@coverage …` directives are metadata, not prose — skip them
+        // so they never become a function's one-line description.
+        if crate::coverage::is_coverage_directive_line(line) {
+            continue;
+        }
         if line.trim().is_empty() {
             break;
         }

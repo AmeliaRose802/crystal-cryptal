@@ -206,3 +206,38 @@ Auto-detected as `coverage.toml` in the cwd if not passed explicitly.
 If neither input is present, the renderer falls back to the legacy `✓/✗/~`
 glyphs and skips the matrix page (fully backward-compatible).
 
+### In-spec `@coverage` directives
+
+Classification can also be declared **inline in the Cryptol source**, next to
+the definition it describes, via a `@coverage` doc-comment directive. This keeps
+the trust boundary in one place (the model) instead of a parallel
+`coverage.toml`, and — unlike a config entry — it works on `private` helpers,
+which are otherwise hidden from the matrix.
+
+```cryptol
+private
+
+  // Specs only compare HMAC outputs for equality; the body is a placeholder.
+  // @coverage trusted: the real SHA-256 in cpp/src/hmac.cpp is not proven here.
+  hmacSha256 : HmacKey -> Request -> HmacTag
+  hmacSha256 k r = k ^ r ^ (r <<< 1)
+```
+
+Recognised kinds (case-insensitive, note optional after `:`):
+
+| Directive | Badge | Aliases |
+|-----------|-------|---------|
+| `@coverage trusted: <note>` | 🔒 Trusted assumption | `assumption`, `override` |
+| `@coverage abstraction: <note>` | 🧩 ABI adapter / stand-in | `adapter`, `abi`, `stand-in` |
+| `@coverage spec-only` | 📄 Spec-only | `spec_only`, `spec` |
+| `@coverage exclude` | *(dropped from matrix)* | `internal` |
+
+The note (text after `:`) is shown in the per-page banner. Directive lines are
+stripped from the rendered prose, so they never leak into a function's
+description. An unrecognised kind is ignored (degrades to "no directive" rather
+than a wrong badge). An in-spec directive and a `coverage.toml` entry are both
+authorial overrides; if both classify the same function they agree by
+construction — the directive is evaluated with the same precedence as the
+config sections.
+
+
