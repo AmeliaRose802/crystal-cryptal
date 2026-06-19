@@ -13,8 +13,8 @@ use crate::linker::SymbolTable;
 use super::RenderOptions;
 use super::mermaid::render_flowchart_mermaid;
 use super::proof::{
-    proof_detail_line, render_failure_details_callout, render_proof_details_callout,
-    render_verify_command_section,
+    implementation_badges, proof_detail_line, render_failure_details_callout,
+    render_proof_details_callout, render_verify_command_section,
 };
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
 use super::util::{
@@ -49,7 +49,10 @@ pub(super) fn render_function_files(
             let current_file = prefixed_file(path_prefix, &format!("functions/{name}.md"));
             let mut out = String::new();
 
-            let badge = function_title_badge(options.ledger.as_ref(), name, proof_status);
+            let badge = implementation_badges(options.function_implementations.get(name))
+                .unwrap_or_else(|| {
+                    function_title_badge(options.ledger.as_ref(), name, proof_status)
+                });
             let private_badge = if *is_private { "`internal helper`" } else { "" };
             let badge_str = match (badge.is_empty(), private_badge.is_empty()) {
                 (false, false) => format!("  {badge}  {private_badge}"),

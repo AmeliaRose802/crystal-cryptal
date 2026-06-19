@@ -41,6 +41,7 @@ fn default_options() -> RenderOptions {
         title_override: None,
         docfx: false,
         ledger: None,
+        function_implementations: std::collections::HashMap::new(),
     }
 }
 

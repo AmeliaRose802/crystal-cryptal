@@ -90,8 +90,7 @@ Multi-module nests each module under its name and adds a root `index.md` with a 
   },
   "functions": {
     "provisionKey": {
-      "overall": { "status": "proven", "solver": "z3", "time_secs": 1.2 },
-      "by_language": {
+      "implementations": {
         "cpp": { "status": "proven", "solver": "z3", "time_secs": 1.2, "impl_file": "sdep.cpp" },
         "rust": { "status": "not_attempted" }
       }
@@ -103,6 +102,7 @@ Multi-module nests each module under its name and adds a root `index.md` with a 
 Statuses: `proven`, `assumed`, `failed`, `not_attempted`.
 
 A flat legacy format (`{"P1": {...}}` with no `"properties"` wrapper) is also accepted for property-only manifests.
+Legacy `overall`-only function entries are also accepted.
 
 Property entries that have status `failed` or `not_attempted` but no matching property in the spec are rendered as placeholder sections so they are never silently dropped.
 
@@ -119,6 +119,11 @@ The `pipeline.ps1` script at the repo root orchestrates all four steps:
 
 # Adapt existing results and re-render:
 .\pipeline.ps1 -Spec SDEP.cry -SkipVerify -Output docs/
+
+# Merge a second language manifest into the main manifest:
+.\pipeline.ps1 -Spec SDEP.cry -SkipVerify -SkipAdapt `
+  -ManifestOutput proof_manifest.json `
+  -MergeProofStatus proof_manifest_rust.json -Output docs/
 ```
 
 The steps it runs:
@@ -205,4 +210,3 @@ Auto-detected as `coverage.toml` in the cwd if not passed explicitly.
 
 If neither input is present, the renderer falls back to the legacy `✓/✗/~`
 glyphs and skips the matrix page (fully backward-compatible).
-
