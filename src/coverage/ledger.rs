@@ -21,10 +21,12 @@ pub enum CoverageBadge {
     /// metadata on a `ProofStatus::Proven`). The general case is a prose
     /// argument, not a machine proof.
     ProvenBounded,
+    /// Assumed contract for a true external primitive/dependency.
+    TrustedAssumption,
     /// A Cryptol abstraction with no real-code counterpart (placeholder,
     /// uninterpreted function, or ABI adapter). Carried in
     /// `coverage.toml [abstraction]`.
-    ModelAbstraction,
+    AbiAdapter,
     /// Real function in the inventory (or a model function with no proof)
     /// that has no proof and no exclusion.
     Unverified,
@@ -39,7 +41,8 @@ impl CoverageBadge {
         match self {
             CoverageBadge::Proven => "✅",
             CoverageBadge::ProvenBounded => "🔲",
-            CoverageBadge::ModelAbstraction => "🧩",
+            CoverageBadge::TrustedAssumption => "🔒",
+            CoverageBadge::AbiAdapter => "🧩",
             CoverageBadge::Unverified => "⚠️",
             CoverageBadge::SpecOnly => "📄",
         }
@@ -49,9 +52,54 @@ impl CoverageBadge {
         match self {
             CoverageBadge::Proven => "Proven",
             CoverageBadge::ProvenBounded => "Proven (bounded)",
-            CoverageBadge::ModelAbstraction => "Model abstraction",
+            CoverageBadge::TrustedAssumption => "Trusted assumption",
+            CoverageBadge::AbiAdapter => "ABI adapter / stand-in",
             CoverageBadge::Unverified => "Implemented, unverified",
             CoverageBadge::SpecOnly => "Spec-only",
+        }
+    }
+}
+
+/// Reason codes for ⚠️ implemented-but-unverified entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CoverageReason {
+    R1Unbounded,
+    R2StlHeap,
+    R3Stateful,
+    R4Timing,
+    R6Compositional,
+}
+
+impl CoverageReason {
+    pub fn parse(input: &str) -> Option<Self> {
+        let code = input.trim().to_ascii_uppercase();
+        match code.as_str() {
+            "R1" | "R1_UNBOUNDED" => Some(Self::R1Unbounded),
+            "R2" | "R2_STL_HEAP" | "R2_STL-HEAP" => Some(Self::R2StlHeap),
+            "R3" | "R3_STATEFUL" => Some(Self::R3Stateful),
+            "R4" | "R4_TIMING" => Some(Self::R4Timing),
+            "R6" | "R6_COMPOSITIONAL" => Some(Self::R6Compositional),
+            _ => None,
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::R1Unbounded => "R1",
+            Self::R2StlHeap => "R2",
+            Self::R3Stateful => "R3",
+            Self::R4Timing => "R4",
+            Self::R6Compositional => "R6",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::R1Unbounded => "unbounded",
+            Self::R2StlHeap => "stl-heap",
+            Self::R3Stateful => "stateful",
+            Self::R4Timing => "timing",
+            Self::R6Compositional => "compositional",
         }
     }
 }
@@ -85,6 +133,9 @@ pub struct LedgerEntry {
     pub models_note: Option<String>,
     pub composes: Vec<String>,
     pub abstraction_note: Option<String>,
+    pub assumption_note: Option<String>,
+    pub stands_in_for: Vec<String>,
+    pub reason_codes: Vec<CoverageReason>,
     pub proof: Option<ProofStatus>,
 }
 
@@ -157,8 +208,15 @@ pub fn build_ledger(
     // same `name` (e.g. cpp + rust mirror of the same function) collapse
     // to one ledger row, keyed by name, listing the first language seen.
     let mut inv_by_name: BTreeMap<String, &InventoryEntry> = BTreeMap::new();
+    let mut modeled_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in &inventory.functions {
         inv_by_name.entry(entry.name.clone()).or_insert(entry);
+        if let Some(model_name) = &entry.models {
+            modeled_by
+                .entry(model_name.clone())
+                .or_default()
+                .push(entry.name.clone());
+        }
     }
 
     let mut entries: Vec<LedgerEntry> = Vec::new();
@@ -180,6 +238,7 @@ pub fn build_ledger(
             LedgerSource::ModelOnly
         };
         let badge = classify(name, Some(&mf.proof), inv, config);
+        let reason_codes = collect_reason_codes(name, inv, config, false);
         entries.push(LedgerEntry {
             name: name.clone(),
             source,
@@ -193,6 +252,9 @@ pub fn build_ledger(
             models_note: inv.and_then(|e| e.models_note.clone()),
             composes: inv.map(|e| e.composes.clone()).unwrap_or_default(),
             abstraction_note: config.abstraction_note(name).map(|s| s.to_string()),
+            assumption_note: config.assumption_note(name).map(|s| s.to_string()),
+            stands_in_for: modeled_by.get(name).cloned().unwrap_or_default(),
+            reason_codes,
             proof: mf.proof.clone(),
         });
         seen.insert(name.clone());
@@ -208,6 +270,7 @@ pub fn build_ledger(
             continue;
         }
         let badge = classify(name, None, Some(entry), config);
+        let reason_codes = collect_reason_codes(name, Some(entry), config, true);
         entries.push(LedgerEntry {
             name: name.clone(),
             source: LedgerSource::ImplementationOnly,
@@ -221,6 +284,9 @@ pub fn build_ledger(
             models_note: entry.models_note.clone(),
             composes: entry.composes.clone(),
             abstraction_note: None,
+            assumption_note: None,
+            stands_in_for: Vec::new(),
+            reason_codes,
             proof: None,
         });
     }
@@ -243,8 +309,9 @@ fn badge_order(b: CoverageBadge) -> u8 {
         CoverageBadge::Unverified => 0,
         CoverageBadge::ProvenBounded => 1,
         CoverageBadge::Proven => 2,
-        CoverageBadge::ModelAbstraction => 3,
-        CoverageBadge::SpecOnly => 4,
+        CoverageBadge::TrustedAssumption => 3,
+        CoverageBadge::AbiAdapter => 4,
+        CoverageBadge::SpecOnly => 5,
     }
 }
 
@@ -258,8 +325,11 @@ fn classify(
     if config.is_spec_only(name) {
         return CoverageBadge::SpecOnly;
     }
+    if config.assumption_note(name).is_some() || matches!(proof, Some(Some(ProofStatus::Assumed))) {
+        return CoverageBadge::TrustedAssumption;
+    }
     if config.abstraction_note(name).is_some() {
-        return CoverageBadge::ModelAbstraction;
+        return CoverageBadge::AbiAdapter;
     }
 
     // Proven (bounded or full) outranks everything else for a real claim.
@@ -271,11 +341,52 @@ fn classify(
         };
     }
 
-    // Implementation-side with no proof → unverified. Same for model-only
-    // with Failed / NotAttempted / None — there's no positive coverage.
-    let _ = inventory; // currently unused for classification, but kept in
-    // the signature for future per-language nuance.
-    CoverageBadge::Unverified
+    // Implementation-side with no proof → unverified.
+    if inventory.is_some() {
+        return CoverageBadge::Unverified;
+    }
+
+    // Model-only function with neither proof nor implementation linkage is
+    // effectively spec-only in this taxonomy.
+    CoverageBadge::SpecOnly
+}
+
+fn collect_reason_codes(
+    name: &str,
+    inventory: Option<&InventoryEntry>,
+    config: &CoverageConfig,
+    allow_composition_fallback: bool,
+) -> Vec<CoverageReason> {
+    let mut out: Vec<CoverageReason> = Vec::new();
+
+    if let Some(entry) = inventory {
+        for code in &entry.reason_codes {
+            if let Some(parsed) = CoverageReason::parse(code)
+                && !out.contains(&parsed)
+            {
+                out.push(parsed);
+            }
+        }
+    }
+
+    for code in config.reason_codes(name) {
+        if let Some(parsed) = CoverageReason::parse(code)
+            && !out.contains(&parsed)
+        {
+            out.push(parsed);
+        }
+    }
+
+    if out.is_empty()
+        && allow_composition_fallback
+        && let Some(entry) = inventory
+        && !entry.composes.is_empty()
+    {
+        out.push(CoverageReason::R6Compositional);
+    }
+
+    out.sort();
+    out
 }
 
 struct ModelFn {

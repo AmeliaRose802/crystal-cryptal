@@ -204,19 +204,19 @@ fn snapshot_coverage_matrix() {
 
 #[test]
 fn snapshot_function_page_with_abstraction_banner() {
-    // hmacSha256 is marked as an abstraction in coverage.toml; the page
-    // must carry a 🧩 banner explaining what it stands in for.
+    // hmacSha256 is marked as a trusted assumption in coverage.toml; the
+    // page must carry a 🔒 banner explaining the trust boundary.
     let (items, symbols, opts) = load_sdep_with_coverage();
     let dir = render_to("cov_fn_abs");
     render_multi_file(&items, &symbols, &dir, &opts).unwrap();
     let content = fs::read_to_string(dir.join("functions/hmacSha256.md")).unwrap();
     assert!(
-        content.contains("🧩"),
-        "abstraction banner missing: {content}"
+        content.contains("🔒"),
+        "trusted-assumption banner missing: {content}"
     );
     assert!(
-        content.contains("NOT SHA-256"),
-        "abstraction note missing: {content}"
+        content.contains("Trusted HMAC contract"),
+        "trusted-assumption note missing: {content}"
     );
     insta::assert_snapshot!("coverage_fn_hmac_sha256", content);
     let _ = fs::remove_dir_all(&dir);

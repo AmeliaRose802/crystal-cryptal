@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 202
 expression: md
 ---
 # Coverage Matrix
@@ -12,49 +13,64 @@ expression: md
 |-------|---------|-------|
 | ✅ | Proven | 0 |
 | 🔲 | Proven (bounded) | 0 |
-| 🧩 | Model abstraction | 3 |
-| ⚠️ | Implemented, unverified | 20 |
-| 📄 | Spec-only | 0 |
+| 🔒 | Trusted assumption | 2 |
+| 🧩 | ABI adapter / stand-in | 1 |
+| ⚠️ | Implemented, unverified | 6 |
+| 📄 | Spec-only | 14 |
 | | **Total** | **23** |
 
-> ⚠️ **20 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
+> ⚠️ **6 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
 
 ## ⚠️ Implemented, unverified
 
 Real production functions with no proof. This is the gap.
 
-| Function | Source | Maps to | Notes |
-|----------|--------|---------|-------|
-| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — |
-| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — |
-| `canonicalizePayload` | impl (cpp) | `canonicalize_lp` *(bounded model only)* | `cpp/src/canonical.cpp` |
-| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — |
-| `canonicalize_lp` | impl (cpp) | `canonLenPrefixed` *(bounded model only)* | `cpp/src/canonical.cpp` |
-| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — |
-| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — |
-| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — |
-| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — |
-| `handle_provision` | impl (cpp) | composes `provisionKey` | `cpp/src/controller.cpp` |
-| `hmac_sha256` | impl (cpp) | `hmacSha256` | `cpp/src/hmac.cpp` |
-| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — |
-| [`lpField`](functions/lpField.md) | model (SDEP) | — | — |
-| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — |
-| [`none`](functions/none.md) | model (SDEP) | — | — |
-| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) | — | `cpp/src/decisions.cpp` |
-| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — |
-| `sha256` | impl (cpp) | — | `cpp/src/sha256.cpp` |
-| [`some`](functions/some.md) | model (SDEP) | — | — |
-| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — |
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| `canonicalizePayload` | impl (cpp) | `canonicalize_lp` *(bounded model only)* | `R1 unbounded`, `R2 stl-heap` | `cpp/src/canonical.cpp` |
+| `canonicalize_lp` | impl (cpp) | `canonLenPrefixed` *(bounded model only)* | `R1 unbounded` | `cpp/src/canonical.cpp` |
+| `handle_provision` | impl (cpp) | composes `provisionKey` | `R6 compositional` | `cpp/src/controller.cpp` |
+| `hmac_sha256` | impl (cpp) | `hmacSha256` | `R2 stl-heap` | `cpp/src/hmac.cpp` |
+| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) | — | `R6 compositional` | `cpp/src/decisions.cpp` |
+| `sha256` | impl (cpp) | — | `R1 unbounded` | `cpp/src/sha256.cpp` |
 
-## 🧩 Model abstraction
+## 🔒 Trusted assumption
+
+Assumed contracts for real external dependencies. These are explicit trust boundaries, not machine-checked equivalence proofs.
+
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`hmacSha256`](functions/hmacSha256.md) | model (SDEP) | stands in for `hmac_sha256` | — | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
+
+## 🧩 ABI adapter / stand-in
 
 Cryptol definitions with no real-code counterpart (placeholders, uninterpreted functions, ABI adapters). The notes column explains what each one stands in for.
 
-| Function | Source | Maps to | Notes |
-|----------|--------|---------|-------|
-| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model (SDEP) | — | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
-| [`hmacSha256`](functions/hmacSha256.md) | model (SDEP) | — | Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified. |
-| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | Constant-time comparison contract; the production constant-time-equals helper is unverified. |
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model (SDEP) | stands in for `canonicalize_lp` | — | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+
+## 📄 Spec-only
+
+Lives in the model on purpose (gap-exhibiting reference functions, etc.) — no implementation expected.
+
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — | — |
+| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — | — |
+| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — | — |
+| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — | — |
+| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — | — |
+| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — | — |
+| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — | — |
+| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — | — |
+| [`lpField`](functions/lpField.md) | model (SDEP) | — | — | — |
+| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — | — |
+| [`none`](functions/none.md) | model (SDEP) | — | — | — |
+| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — | — |
+| [`some`](functions/some.md) | model (SDEP) | — | — | — |
+| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — | — |
 
 ## Excluded helpers
 

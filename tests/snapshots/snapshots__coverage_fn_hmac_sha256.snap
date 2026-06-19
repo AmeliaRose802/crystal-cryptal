@@ -1,10 +1,11 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 221
 expression: content
 ---
-# `hmacSha256`  🧩
+# `hmacSha256`  🔒
 
-> 🧩 **Model abstraction.** Algebraic placeholder; NOT SHA-256. Real HMAC is implemented in `cpp/src/hmac.cpp` and remains unverified. No production function is proven equivalent to this definition on this page.
+> 🔒 **Trusted assumption — not proven here.** Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. Stands in for real function: `hmac_sha256`. Any proof that depends on this definition inherits that assumption.
 
 ### Signature
 

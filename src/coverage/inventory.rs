@@ -21,6 +21,7 @@
 //       "models_note": "bounded model only" },
 //     { "name": "handle_provision", "lang": "cpp",
 //       "file": "cpp/src/controller.cpp",
+//       "reason_codes": ["R6"],
 //       "composes": ["provisionKey"] }
 //   ]
 // }
@@ -60,6 +61,11 @@ pub struct InventoryEntry {
     /// inherits whatever coverage `provisionKey` carries.
     #[serde(default)]
     pub composes: Vec<String>,
+
+    /// Why this function is currently ⚠️ implemented-but-unverified.
+    /// Expected values are R1/R2/R3/R4/R6.
+    #[serde(default)]
+    pub reason_codes: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
