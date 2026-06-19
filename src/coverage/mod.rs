@@ -15,8 +15,8 @@ mod tests;
 
 pub use config::{CoverageConfig, load_coverage_config};
 pub use inventory::{ImplementationInventory, InventoryEntry, load_inventory};
-pub use ledger::{CoverageBadge, CoverageReason, Ledger, LedgerEntry, LedgerSource, build_ledger};
 pub use ledger::is_coverage_directive_line;
+pub use ledger::{CoverageBadge, CoverageReason, Ledger, LedgerEntry, LedgerSource, build_ledger};
 #[cfg(test)]
 pub(crate) use ledger::{DirectiveKind, parse_coverage_directive};
 pub use render::{
