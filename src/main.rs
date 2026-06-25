@@ -20,6 +20,7 @@ use cli::bundle::{
 use cli::coverage::{CoverageInputs, build_ledger_from_cli, write_coverage_matrix};
 use cli::extra_docs::handle_extra_docs;
 use cli::functions::run_emit_function_list;
+use cli::pipeline::{PipelineArgs, run_pipeline};
 use cli::saw_adapt::{run_adapt_saw_results, run_saw_log_adapter};
 
 #[derive(Parser, Debug)]
@@ -114,6 +115,9 @@ struct Cli {
     /// otherwise the directory basename (Title Case) is used.
     #[arg(long = "extra-docs", value_name = "DIR[:NAME]")]
     extra_docs: Vec<String>,
+
+    #[command(flatten)]
+    pipeline: PipelineArgs,
 }
 
 fn main() {
@@ -127,6 +131,19 @@ fn main() {
     if let Some(results_dir) = &cli.adapt_saw_results {
         run_adapt_saw_results(results_dir, &cli.manifest_output);
         return;
+    }
+
+    if cli.pipeline.pipeline {
+        run_pipeline(
+            &cli.inputs,
+            &cli.output,
+            &cli.manifest_output,
+            cli.docfx,
+            cli.logo.as_deref(),
+            cli.favicon.as_deref(),
+            &cli.extra_docs,
+            &cli.pipeline,
+        );
     }
 
     if cli.inputs.is_empty() {

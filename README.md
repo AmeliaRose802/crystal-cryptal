@@ -56,10 +56,19 @@ pretty-specs --adapt-saw-log saw_output.txt --manifest-output proof_manifest.jso
 pretty-specs --adapt-saw-results ./verify_out --manifest-output proof_manifest.json
 ```
 
-The bundled [pipeline.ps1](pipeline.ps1) chains all of these steps end-to-end
+The built-in `--pipeline` flag chains all of these steps end-to-end
 (initial render → emit function list → run saw-spec-gen per function →
-adapt results → re-render with badges). Run `Get-Help .\pipeline.ps1 -Full`
-for parameters.
+adapt results → re-render with badges) as a single cross-platform command:
+
+```bash
+# Full pipeline: render, verify each function, re-render with badges
+pretty-specs SDEP.cry --pipeline --impl sdep.cpp -o docs/
+
+# Docs only (no verification — omit --impl or pass --skip-verify)
+pretty-specs SDEP.cry --pipeline --skip-verify -o docs/
+```
+
+Run `pretty-specs --help` for the full list of `--pipeline` options.
 
 ## CLI reference
 
