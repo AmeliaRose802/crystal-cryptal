@@ -108,17 +108,18 @@ Property entries that have status `failed` or `not_attempted` but no matching pr
 
 ## End-to-end pipeline with saw-spec-gen
 
-The `pipeline.ps1` script at the repo root orchestrates all four steps:
+The built-in `--pipeline` flag orchestrates all four steps in one
+cross-platform command (no PowerShell required):
 
-```powershell
+```bash
 # Full pipeline (from source):
-.\pipeline.ps1 -Spec SDEP.cry -Impl sdep.cpp -PrettySpecs "cargo run --" -Output docs/
+pretty-specs SDEP.cry --pipeline --impl sdep.cpp --saw-spec-gen "cargo run --" -o docs/
 
 # Docs only (no verification):
-.\pipeline.ps1 -Spec SDEP.cry -SkipVerify -SkipAdapt -Output docs/
+pretty-specs SDEP.cry --pipeline --skip-verify --skip-adapt -o docs/
 
 # Adapt existing results and re-render:
-.\pipeline.ps1 -Spec SDEP.cry -SkipVerify -Output docs/
+pretty-specs SDEP.cry --pipeline --skip-verify -o docs/
 ```
 
 The steps it runs:
@@ -127,7 +128,7 @@ The steps it runs:
 |------|---------|
 | 0 | `pretty-specs SDEP.cry -o docs/` — initial render |
 | 1 | `pretty-specs SDEP.cry --emit-function-list -o verify_out/function_list.json` |
-| 2 | `saw-spec-gen gen-verify ...` for each function in the list |
+| 2 | `saw-spec-gen verify-cpp` / `verify-rust ...` for each function in the list |
 | 3 | `pretty-specs --adapt-saw-results verify_out/ --manifest-output proof_manifest.json` |
 | 4 | `pretty-specs SDEP.cry --proof-status proof_manifest.json -o docs/` — badged render |
 

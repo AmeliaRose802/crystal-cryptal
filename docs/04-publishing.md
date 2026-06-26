@@ -5,7 +5,8 @@
 
 ## Problem
 
-`crystal-cryptal` ships the `pretty-specs` renderer and `pipeline.ps1`, but it
+`crystal-cryptal` ships the `pretty-specs` renderer (with its built-in
+`--pipeline` orchestrator), but it
 publishes **nothing** — no GitHub Release, no package, no crate. Every consumer
 has to clone the repo and `cargo build --release` from `master` HEAD.
 
@@ -30,8 +31,8 @@ download it instead of building HEAD.
 ## Proposal: tag-driven release with prebuilt binaries
 
 Adopt SemVer tags (`vX.Y.Z`) as the release trigger. On tag push, a CI matrix
-builds `pretty-specs` for each target OS and uploads the binaries — **plus
-`pipeline.ps1`** — as GitHub Release assets with checksums.
+builds `pretty-specs` for each target OS and uploads the binaries as GitHub
+Release assets with checksums.
 
 ```
   git tag v0.1.0 && git push --tags
@@ -39,7 +40,7 @@ builds `pretty-specs` for each target OS and uploads the binaries — **plus
         ▼
   release.yml (matrix: linux-x64, windows-x64[, macos])
         │   cargo build --release
-        │   bundle: pretty-specs[.exe] + pipeline.ps1 + regen.ps1 + LICENSE
+        │   bundle: pretty-specs[.exe] + regen.ps1 + LICENSE
         │   sha256 checksums
         ▼
   GitHub Release v0.1.0  ◀── consumers download by version, not branch
@@ -51,10 +52,10 @@ Three rules carry the whole design:
   asserts the pushed tag matches `version` in `Cargo.toml`, so a release can
   never disagree with the crate metadata.
 
-- **Ship `pipeline.ps1` *in* the release, not just the binary.** The pipeline
-  script is what downstream actually invokes; a binary-only release would still
-  force a clone. Bundle the binary + `pipeline.ps1` (+ `regen.ps1`) in one
-  archive per platform so a consumer needs exactly one download.
+- **The pipeline is built into the binary.** The `pretty-specs --pipeline`
+  flag is what downstream invokes, so a single binary (plus the optional
+  `regen.ps1` convenience wrapper) per platform is all a consumer needs to
+  download — no separate orchestration script to keep in sync.
 
 - **Checksums, always.** Emit `SHA256SUMS` next to the assets so consumers can
   verify what they fetched.
@@ -127,7 +128,7 @@ jobs:
         run: |
           d="pretty-specs-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir "$d"
-          cp "target/release/pretty-specs${{ matrix.ext }}" pipeline.ps1 regen.ps1 LICENSE* "$d" 2>/dev/null || true
+          cp "target/release/pretty-specs${{ matrix.ext }}" regen.ps1 LICENSE* "$d" 2>/dev/null || true
           tar -czf "$d.tar.gz" "$d"
           sha256sum "$d.tar.gz" > "$d.sha256"
       - uses: softprops/action-gh-release@v2
@@ -151,7 +152,7 @@ step collapses to a pinned download:
     $a = "pretty-specs-$v-x86_64-unknown-linux-gnu.tar.gz"
     gh release download $v --repo AmeliaRose802/crystal-cryptal --pattern $a
     tar -xzf $a
-    # verify SHA256SUMS, then use ./pretty-specs and ./pipeline.ps1
+    # verify SHA256SUMS, then use ./pretty-specs (with --pipeline)
 ```
 
 Result for the consumer: **faster** (no compile), **reproducible** (a pinned
@@ -162,8 +163,7 @@ testing unreleased `master`.
 ## Acceptance criteria
 
 1. Pushing a `vX.Y.Z` tag produces a GitHub Release with Linux + Windows
-   archives, each containing the `pretty-specs` binary **and** `pipeline.ps1`,
-   plus `SHA256SUMS`.
+   archives, each containing the `pretty-specs` binary, plus `SHA256SUMS`.
 2. CI **fails** the release if the tag doesn't match `Cargo.toml` `version`.
 3. `pretty-specs --version` and the rendered site footer both report the
    released version.
