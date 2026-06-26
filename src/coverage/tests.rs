@@ -254,6 +254,79 @@ fn directive_line_predicate_matches_leading_whitespace() {
 }
 
 #[test]
+fn uninterpreted_annotation_maps_to_trusted_with_default_note() {
+    // saw-spec-gen's bare `@uninterpreted` marker (no note) → 🔒 with the
+    // default assumed-spec banner note.
+    let d = parse_coverage_directive(&["@uninterpreted".to_string()]).unwrap();
+    assert_eq!(d.kind, DirectiveKind::Trusted);
+    let note = d.note.expect("default note supplied");
+    assert!(note.contains("llvm_unsafe_assume_spec"), "note: {note}");
+}
+
+#[test]
+fn uninterpreted_annotation_strips_symbol_attr() {
+    // The `symbol="…"` attribute names the impl symbol, not human prose, so it
+    // must not leak into the banner note.
+    let d =
+        parse_coverage_directive(&[r#"@uninterpreted symbol="?HmacSha256@@YA_KXZ""#.to_string()])
+            .unwrap();
+    assert_eq!(d.kind, DirectiveKind::Trusted);
+    let note = d.note.unwrap();
+    assert!(
+        !note.contains("HmacSha256"),
+        "symbol leaked into note: {note}"
+    );
+}
+
+#[test]
+fn uninterpreted_annotation_honours_explicit_note() {
+    let d = parse_coverage_directive(&[
+        "@uninterpreted: real HMAC contract; SHA-256 not proven.".to_string()
+    ])
+    .unwrap();
+    assert_eq!(d.kind, DirectiveKind::Trusted);
+    assert_eq!(
+        d.note.as_deref(),
+        Some("real HMAC contract; SHA-256 not proven.")
+    );
+}
+
+#[test]
+fn uninterpreted_annotation_strips_symbol_and_keeps_note() {
+    let d = parse_coverage_directive(&[
+        r#"@uninterpreted symbol="hmac_impl": trusted HMAC primitive."#.to_string(),
+    ])
+    .unwrap();
+    assert_eq!(d.kind, DirectiveKind::Trusted);
+    assert_eq!(d.note.as_deref(), Some("trusted HMAC primitive."));
+}
+
+#[test]
+fn uninterpreted_directive_line_is_hidden_from_prose() {
+    assert!(is_coverage_directive_line("  @uninterpreted"));
+    assert!(is_coverage_directive_line(r#"@uninterpreted symbol="x""#));
+}
+
+#[test]
+fn uninterpreted_annotation_includes_private_primitive_as_trusted() {
+    // A private model primitive carrying saw-spec-gen's `@uninterpreted`
+    // annotation is opted into the ledger as 🔒 — mirroring the assumed spec
+    // saw-spec-gen emits for it.
+    let items = vec![mk_private_fn("hmacSha256", &["@uninterpreted"])];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+    let e = ledger
+        .lookup("hmacSha256")
+        .expect("opted in via @uninterpreted");
+    assert_eq!(e.badge, CoverageBadge::TrustedAssumption);
+    assert!(e.assumption_note.is_some());
+}
+
+#[test]
 fn render_matrix_emits_all_sections() {
     let items = vec![
         mk_fn("provisionKey", Some(proven(None))),

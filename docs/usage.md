@@ -241,4 +241,34 @@ authorial overrides; if both classify the same function they agree by
 construction — the directive is evaluated with the same precedence as the
 config sections.
 
+### saw-spec-gen `@uninterpreted` annotations
+
+[saw-spec-gen](https://github.com/AmeliaRose802/saw-spec-gen) lets you mark an
+opaque crypto primitive (SHA-256, HMAC, AEAD, constant-time compare, …) with an
+`@uninterpreted` doc-comment annotation. Instead of symbolically executing the
+primitive, saw-spec-gen binds its implementation symbol to the Cryptol model via
+an **assumed spec** (`llvm_unsafe_assume_spec` / `mir_unsafe_assume_spec`) and
+reasons about callers compositionally.
+
+pretty-specs recognises the **same annotation** and renders the function with
+the 🔒 **Trusted assumption** badge — so a single declaration keeps both tools in
+agreement: saw-spec-gen assumes the contract, and the docs honestly report that
+the primitive is trusted, not proven.
+
+```cryptol
+/** @uninterpreted */
+hmacSha256 : [32][8] -> [n][8] -> [32][8]
+hmacSha256 k m = ...   // body is irrelevant; the symbol is assumed, not unfolded
+
+/** @uninterpreted symbol="?HmacSha256@@YA_KXZ" */
+hmacSha256 : [32][8] -> [n][8] -> [32][8]
+```
+
+The optional `symbol="…"` attribute names the implementation symbol for
+saw-spec-gen; pretty-specs strips it from the banner. You can also supply an
+explicit banner note: `@uninterpreted: real SHA-256 is not proven here.`
+Otherwise a default note spelling out the assumed-spec semantics is used.
+`@uninterpreted` is equivalent to `@coverage trusted` and, like it, opts a
+`private` primitive into the matrix.
+
 
