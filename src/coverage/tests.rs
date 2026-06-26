@@ -21,6 +21,8 @@ fn proven(iters: Option<u64>) -> ProofStatus {
         iterations: iters,
         verify_command: None,
         verify_script: None,
+        verify_script_body: None,
+        override_specs: std::collections::HashMap::new(),
     }
 }
 

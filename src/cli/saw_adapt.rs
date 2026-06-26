@@ -82,6 +82,8 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             iterations,
             verify_command,
             verify_script,
+            verify_script_body,
+            override_specs,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("proven"));
@@ -101,6 +103,12 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
             }
+            if let Some(body) = verify_script_body {
+                m.insert("verify_script_body".into(), serde_json::json!(body));
+            }
+            if !override_specs.is_empty() {
+                m.insert("override_specs".into(), serde_json::json!(override_specs));
+            }
             serde_json::Value::Object(m)
         }
         ProofStatus::Failed {
@@ -109,6 +117,7 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             log_excerpt,
             verify_command,
             verify_script,
+            verify_script_body,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("failed"));
@@ -124,6 +133,9 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             }
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
+            }
+            if let Some(body) = verify_script_body {
+                m.insert("verify_script_body".into(), serde_json::json!(body));
             }
             serde_json::Value::Object(m)
         }
@@ -267,6 +279,19 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         .get("verify_script")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let verify_script_body: Option<String> = value
+        .get("verify_script_body")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let override_specs: std::collections::HashMap<String, String> = value
+        .get("override_specs")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
 
     match raw_status {
         "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => ProofStatus::Proven {
@@ -276,6 +301,8 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             iterations,
             verify_command,
             verify_script,
+            verify_script_body,
+            override_specs,
         },
         "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
             ProofStatus::Failed {
@@ -284,6 +311,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
                 log_excerpt,
                 verify_command,
                 verify_script,
+                verify_script_body,
             }
         }
         "timeout" => ProofStatus::Failed {
@@ -292,6 +320,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             log_excerpt,
             verify_command,
             verify_script,
+            verify_script_body,
         },
         "error" | "UNKNOWN" => ProofStatus::Failed {
             reason: message.unwrap_or_else(|| "error during verification".into()),
@@ -299,6 +328,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             log_excerpt,
             verify_command,
             verify_script,
+            verify_script_body,
         },
         _ => ProofStatus::NotAttempted,
     }

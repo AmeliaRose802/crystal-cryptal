@@ -56,6 +56,8 @@ fn serde_round_trip() {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                verify_script_body: None,
+                override_specs: std::collections::HashMap::new(),
             }),
             is_private: false,
         },
