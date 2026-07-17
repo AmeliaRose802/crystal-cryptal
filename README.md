@@ -64,9 +64,20 @@ adapt results → re-render with badges) as a single cross-platform command:
 # Full pipeline: render, verify each function, re-render with badges
 pretty-specs SDEP.cry --pipeline --impl sdep.cpp -o docs/
 
+# Split C++ implementation (a directory is expanded recursively; --impl is repeatable)
+pretty-specs SDEP.cry --pipeline --impl cpp/src --clang-flag=-fexceptions -o docs/
+
 # Docs only (no verification — omit --impl or pass --skip-verify)
 pretty-specs SDEP.cry --pipeline --skip-verify -o docs/
 ```
+
+The pipeline preserves saw-spec-gen's auto-discovered TOML settings in a
+generated per-run config and enables soft skipping for Cryptol-only helpers.
+Use `--saw-spec-gen-config FILE` to select a config explicitly or
+`--strict-on-missing` to make missing implementation symbols fatal. Verifier
+invocation/tooling errors stop before result adaptation so broken CLI calls
+cannot publish misleading badges; `--best-effort` restores the legacy behavior
+for deliberately partial runs.
 
 Run `pretty-specs --help` for the full list of `--pipeline` options.
 

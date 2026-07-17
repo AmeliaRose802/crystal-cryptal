@@ -1,0 +1,5 @@
+module PipelineIdentity where
+
+/** Identity model used by the native pipeline compatibility smoke test. */
+pipeline_identity : [32] -> [32]
+pipeline_identity x = x

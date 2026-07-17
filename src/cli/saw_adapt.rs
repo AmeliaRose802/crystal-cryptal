@@ -171,7 +171,11 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
 
         let mut entry = serde_json::Map::new();
         entry.insert("overall".into(), proof_status_to_json(&proof_status));
-        if let Some(lang) = value.get("impl_lang").and_then(|v| v.as_str()) {
+        if let Some(lang) = value
+            .get("impl_lang")
+            .or_else(|| value.get("side"))
+            .and_then(|v| v.as_str())
+        {
             let mut lang_entry = proof_status_to_json(&proof_status);
             if let Some(obj) = lang_entry.as_object_mut()
                 && let Some(f) = value.get("impl_file").and_then(|v| v.as_str())

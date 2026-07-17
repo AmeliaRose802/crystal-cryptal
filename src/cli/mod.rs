@@ -7,4 +7,5 @@ pub(crate) mod coverage;
 pub(crate) mod extra_docs;
 pub(crate) mod functions;
 pub(crate) mod pipeline;
+mod pipeline_verify;
 pub(crate) mod saw_adapt;

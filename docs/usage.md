@@ -115,12 +115,30 @@ cross-platform command (no PowerShell required):
 # Full pipeline (from source):
 pretty-specs SDEP.cry --pipeline --impl sdep.cpp --saw-spec-gen "cargo run --" -o docs/
 
+# A source directory is expanded recursively; --impl may also be repeated:
+pretty-specs SDEP.cry --pipeline --impl cpp/src \
+  --clang-flag=-fexceptions --clang-flag=-fno-inline -o docs/
+
 # Docs only (no verification):
 pretty-specs SDEP.cry --pipeline --skip-verify --skip-adapt -o docs/
 
 # Adapt existing results and re-render:
 pretty-specs SDEP.cry --pipeline --skip-verify -o docs/
 ```
+
+Before Step 2, pretty-specs discovers the same spec-adjacent
+`saw-spec-gen.toml` configuration as saw-spec-gen, copies its settings into a
+per-run config under `--verify-output`, and sets `spec_only_on_missing = true`.
+This lets a function inventory span several implementation files without
+treating every non-matching file as an error. Pass
+`--saw-spec-gen-config FILE` to select the base config explicitly, or
+`--strict-on-missing` to disable the soft skip.
+
+Dash-prefixed clang values are forwarded in joined form (for example,
+`--clang-flag=-fexceptions`) so current saw-spec-gen/clap versions do not parse
+them as top-level options. If a verifier invocation fails before writing a
+usable `result.json`, the pipeline exits non-zero and skips Steps 3–4. Use
+`--best-effort` only when adapting partial/error results is intentional.
 
 The steps it runs:
 
@@ -134,21 +152,26 @@ The steps it runs:
 
 ## `result.json` format for `--adapt-saw-results`
 
-Each `result.json` produced by saw-spec-gen (one per `out_{fn}/`) must contain:
+Current saw-spec-gen `result.json` files (one per `out_{fn}/`) use schema 1:
 
 ```json
 {
+  "schema_version": "1",
+  "side": "cpp",
+  "function": "provisionKey",
   "cryptol_fn": "provisionKey",
-  "status": "verified",
+  "verdict": "VERIFIED",
+  "counterexample": [],
   "solver": "z3",
   "time_secs": 1.2,
-  "impl_lang": "cpp",
-  "impl_file": "sdep.cpp",
-  "message": null
+  "impl_file": "sdep.cpp"
 }
 ```
 
-`status` values: `verified` → proven; `counterexample`/`invalid`/`sat` → failed; `timeout`/`error` → failed; anything else → not_attempted.
+The adapter also accepts the legacy `impl_lang` and lowercase `status` fields.
+`VERIFIED` maps to proven; `DISPROVED`, counterexample, invalid, and timeout
+map to failed; a spec-only result with `status: "not_attempted"` remains not
+attempted. `side` (or legacy `impl_lang`) populates the per-language manifest.
 
 If `cryptol_fn` is absent, the adapter falls back to the `function` field, then to the parent directory name (`out_provisionKey` → `provisionKey`).
 

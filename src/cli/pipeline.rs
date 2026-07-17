@@ -19,6 +19,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use super::pipeline_verify;
+
 /// Pipeline-mode flags, flattened into the top-level `Cli`.
 #[derive(clap::Args, Debug)]
 pub(crate) struct PipelineArgs {
@@ -31,13 +33,19 @@ pub(crate) struct PipelineArgs {
     #[arg(long)]
     pub pipeline: bool,
 
-    /// Implementation file (C++ or Rust) passed to saw-spec-gen. When
-    /// omitted, the verification steps (1–2) are skipped (docs only).
+    /// Implementation file or directory (C++ or Rust) passed to saw-spec-gen.
+    /// Repeat for split implementations. Directories are searched recursively
+    /// for files matching `--impl-lang`. When omitted, verification is skipped.
     #[arg(long = "impl", value_name = "FILE")]
-    pub impl_file: Option<PathBuf>,
+    pub impl_files: Vec<PathBuf>,
 
     /// Implementation language for `--impl`: `cpp` or `rust`.
-    #[arg(long = "impl-lang", value_name = "cpp|rust", default_value = "cpp")]
+    #[arg(
+        long = "impl-lang",
+        value_name = "cpp|rust",
+        default_value = "cpp",
+        value_parser = ["cpp", "rust"]
+    )]
     pub impl_lang: String,
 
     /// Path (or name on PATH) of the saw-spec-gen binary. A wrapper invocation
@@ -48,6 +56,11 @@ pub(crate) struct PipelineArgs {
         default_value = "saw-spec-gen"
     )]
     pub saw_spec_gen: String,
+
+    /// Explicit saw-spec-gen project config. When omitted, config is
+    /// discovered beside the Cryptol spec using saw-spec-gen's search order.
+    #[arg(long = "saw-spec-gen-config", value_name = "FILE")]
+    pub saw_spec_gen_config: Option<PathBuf>,
 
     /// Directory where saw-spec-gen writes `out_*/result.json` files.
     #[arg(
@@ -66,7 +79,7 @@ pub(crate) struct PipelineArgs {
     pub cxx_standard: Option<String>,
 
     /// Extra raw clang flag forwarded verbatim (C++ only). Repeatable.
-    #[arg(long = "clang-flag", value_name = "FLAG")]
+    #[arg(long = "clang-flag", value_name = "FLAG", allow_hyphen_values = true)]
     pub clang_flags: Vec<String>,
 
     /// Skip saw-spec-gen verification (Steps 1–2).
@@ -81,9 +94,13 @@ pub(crate) struct PipelineArgs {
     #[arg(long = "skip-docs")]
     pub skip_docs: bool,
 
+    /// Continue adapting results and return success even when saw-spec-gen
+    /// invocations fail before producing a usable result.json.
+    #[arg(long = "best-effort")]
+    pub best_effort: bool,
+
     /// Treat a Cryptol helper with no matching implementation symbol as a
-    /// hard error instead of soft-skipping it. (Soft-skip is the default,
-    /// since most spec modules contain private helpers with no impl analog.)
+    /// hard pipeline error instead of recording it as not attempted.
     #[arg(long = "strict-on-missing")]
     pub strict_on_missing: bool,
 }
@@ -140,13 +157,33 @@ pub(crate) fn run_pipeline(
     run_or_die(&self_exe, &step0, "pretty-specs render");
 
     // ── Steps 1–2: verification ──────────────────────────────────────────────
-    if !args.skip_verify {
-        match &args.impl_file {
-            Some(impl_file) => run_verification(&self_exe, &spec, impl_file, &doc, args),
-            None => eprintln!(
-                "\n[Step 1+2] Skipped (no --impl provided — set --impl to enable SAW verification)"
-            ),
-        }
+    let verification = if args.skip_verify {
+        None
+    } else if args.impl_files.is_empty() {
+        eprintln!(
+            "\n[Step 1+2] Skipped (no --impl provided — set --impl to enable SAW verification)"
+        );
+        None
+    } else {
+        let functions = emit_function_list(&self_exe, &spec, args);
+        Some(
+            pipeline_verify::run(&spec, &functions, args).unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }),
+        )
+    };
+
+    if let Some(summary) = &verification
+        && summary.has_pipeline_errors()
+        && !args.best_effort
+    {
+        eprintln!(
+            "\nerror: verification was unusable for {} function(s); Steps 3–4 were skipped to avoid publishing misleading proof badges",
+            summary.pipeline_errors
+        );
+        eprintln!("       pass --best-effort to adapt partial/error results anyway");
+        std::process::exit(1);
     }
 
     // ── Step 3: adapt saw-spec-gen results ───────────────────────────────────
@@ -206,14 +243,8 @@ pub(crate) fn run_pipeline(
     std::process::exit(0);
 }
 
-/// Steps 1–2: emit the function list, then run saw-spec-gen per function.
-fn run_verification(
-    self_exe: &Path,
-    spec: &Path,
-    impl_file: &Path,
-    doc: &DocOpts<'_>,
-    args: &PipelineArgs,
-) {
+/// Step 1: emit and load the list of Cryptol functions to verify.
+fn emit_function_list(self_exe: &Path, spec: &Path, args: &PipelineArgs) -> Vec<String> {
     let function_list = args.verify_output.join("function_list.json");
     eprintln!(
         "\n[Step 1] Emitting function list -> {}",
@@ -233,77 +264,7 @@ fn run_verification(
         ],
         "pretty-specs --emit-function-list",
     );
-
-    eprintln!("\n[Step 2] Running saw-spec-gen for each function");
-    let functions = load_function_names(&function_list);
-    let (saw_prog, saw_lead) = split_program(&args.saw_spec_gen);
-    let is_rust = args.impl_lang.eq_ignore_ascii_case("rust");
-
-    let total = functions.len();
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-
-    for name in &functions {
-        let out_dir = args.verify_output.join(format!("out_{name}"));
-        eprint!("  Verifying {name} ...");
-
-        let mut argv: Vec<String> = saw_lead.clone();
-        if is_rust {
-            argv.push("verify-rust".into());
-            argv.extend(["--rust-file".into(), path_str(impl_file)]);
-        } else {
-            argv.push("verify-cpp".into());
-            argv.extend(["--cpp-file".into(), path_str(impl_file)]);
-        }
-        argv.extend(["--cryptol-spec".into(), path_str(spec)]);
-        argv.extend(["--cryptol-fn".into(), name.clone()]);
-        argv.extend(["--function".into(), name.clone()]);
-        argv.extend(["--output".into(), path_str(&out_dir)]);
-        if !is_rust {
-            for d in &args.cxx_include_dirs {
-                argv.extend(["--include-dir".into(), path_str(d)]);
-            }
-            if let Some(std) = &args.cxx_standard {
-                argv.extend(["--cxx-standard".into(), std.clone()]);
-            }
-            for f in &args.clang_flags {
-                argv.extend(["--clang-flag".into(), f.clone()]);
-            }
-        }
-        if !args.strict_on_missing {
-            argv.push("--spec-only-on-missing".into());
-        }
-
-        let status = Command::new(&saw_prog).args(&argv).status();
-        match status {
-            Ok(s) if s.success() => {
-                eprintln!(" ok");
-                passed += 1;
-            }
-            Ok(s) => {
-                let code = s.code().unwrap_or(-1);
-                eprintln!(" FAILED (exit {code})");
-                failed += 1;
-                write_error_result(
-                    &out_dir,
-                    name,
-                    &format!("saw-spec-gen verify exited with code {code}"),
-                );
-            }
-            Err(e) => {
-                eprintln!(" ERROR: {e}");
-                failed += 1;
-                write_error_result(
-                    &out_dir,
-                    name,
-                    &format!("failed to spawn saw-spec-gen: {e}"),
-                );
-            }
-        }
-    }
-
-    eprintln!("  {passed}/{total} passed, {failed} failed");
-    let _ = doc; // doc opts unused here; verification writes to verify_output
+    load_function_names(&function_list)
 }
 
 /// Append the shared doc-render flags (docfx / logo / favicon / extra-docs).
@@ -337,26 +298,6 @@ fn load_function_names(path: &Path) -> Vec<String> {
     entries.into_iter().map(|e| e.name).collect()
 }
 
-/// Write a fallback `result.json` so `--adapt-saw-results` records the failure.
-fn write_error_result(out_dir: &Path, name: &str, message: &str) {
-    if let Err(e) = std::fs::create_dir_all(out_dir) {
-        eprintln!("warning: cannot create {}: {e}", out_dir.display());
-        return;
-    }
-    let json = serde_json::json!({
-        "cryptol_fn": name,
-        "status": "error",
-        "message": message,
-    });
-    let dest = out_dir.join("result.json");
-    if let Err(e) = std::fs::write(
-        &dest,
-        serde_json::to_string_pretty(&json).unwrap_or_default(),
-    ) {
-        eprintln!("warning: cannot write {}: {e}", dest.display());
-    }
-}
-
 /// Run a pretty-specs (self) subcommand; abort the pipeline on failure.
 fn run_or_die(self_exe: &Path, argv: &[std::ffi::OsString], label: &str) {
     eprintln!("  > {} {}", self_exe.display(), render_argv(argv));
@@ -373,24 +314,12 @@ fn run_or_die(self_exe: &Path, argv: &[std::ffi::OsString], label: &str) {
     }
 }
 
-/// Split a possibly-wrapped program string (e.g. `"cargo run --"`) into the
-/// program and its leading arguments.
-fn split_program(s: &str) -> (String, Vec<String>) {
-    let mut parts = s.split_whitespace().map(String::from);
-    let prog = parts.next().unwrap_or_default();
-    (prog, parts.collect())
-}
-
 fn os(s: &str) -> std::ffi::OsString {
     std::ffi::OsString::from(s)
 }
 
 fn osstr(p: &Path) -> std::ffi::OsString {
     p.as_os_str().to_os_string()
-}
-
-fn path_str(p: &Path) -> String {
-    p.to_string_lossy().into_owned()
 }
 
 fn render_argv(argv: &[std::ffi::OsString]) -> String {
