@@ -138,6 +138,7 @@ fn main() {
             &cli.inputs,
             &cli.output,
             &cli.manifest_output,
+            cli.implementation_inventory.as_deref(),
             cli.docfx,
             cli.logo.as_deref(),
             cli.favicon.as_deref(),

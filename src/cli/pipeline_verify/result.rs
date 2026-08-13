@@ -66,7 +66,13 @@ pub(super) fn restore_result(out_dir: &Path, text: &str) {
     }
 }
 
-pub(super) fn write_error_result(out_dir: &Path, name: &str, impl_lang: &str, message: &str) {
+pub(super) fn write_error_result(
+    out_dir: &Path,
+    function: &str,
+    cryptol_fn: &str,
+    impl_lang: &str,
+    message: &str,
+) {
     if let Err(e) = std::fs::create_dir_all(out_dir) {
         eprintln!("warning: cannot create {}: {e}", out_dir.display());
         return;
@@ -74,8 +80,8 @@ pub(super) fn write_error_result(out_dir: &Path, name: &str, impl_lang: &str, me
     let json = serde_json::json!({
         "schema_version": "1",
         "side": impl_lang,
-        "function": name,
-        "cryptol_fn": name,
+        "function": function,
+        "cryptol_fn": cryptol_fn,
         "status": "error",
         "verdict": "UNKNOWN",
         "kind": "pipeline_invocation_error",

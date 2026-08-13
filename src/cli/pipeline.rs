@@ -14,10 +14,13 @@
 // always uses the matching renderer. Step 2 shells out to the `saw-spec-gen`
 // binary's native subcommands — no PowerShell shim required.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
+
+use pretty_specs::coverage::load_inventory;
 
 use super::pipeline_verify;
 
@@ -109,6 +112,7 @@ pub(crate) struct PipelineArgs {
 pub(crate) struct DocOpts<'a> {
     pub output: &'a Path,
     pub manifest_output: &'a Path,
+    pub implementation_inventory: Option<&'a Path>,
     pub docfx: bool,
     pub logo: Option<&'a Path>,
     pub favicon: Option<&'a Path>,
@@ -126,15 +130,18 @@ pub(crate) fn run_pipeline(
     inputs: &[PathBuf],
     output: &Path,
     manifest_output: &Path,
+    implementation_inventory: Option<&Path>,
     docfx: bool,
     logo: Option<&Path>,
     favicon: Option<&Path>,
     extra_docs: &[String],
     args: &PipelineArgs,
 ) -> ! {
+    let resolved_inventory = resolve_inventory_path(implementation_inventory, manifest_output);
     let doc = DocOpts {
         output,
         manifest_output,
+        implementation_inventory: resolved_inventory.as_deref(),
         docfx,
         logo,
         favicon,
@@ -166,8 +173,9 @@ pub(crate) fn run_pipeline(
         None
     } else {
         let functions = emit_function_list(&self_exe, &spec, args);
+        let model_mappings = load_model_mappings(doc.implementation_inventory, &args.impl_lang);
         Some(
-            pipeline_verify::run(&spec, &functions, args).unwrap_or_else(|e| {
+            pipeline_verify::run(&spec, &functions, &model_mappings, args).unwrap_or_else(|e| {
                 eprintln!("error: {e}");
                 std::process::exit(2);
             }),
@@ -269,6 +277,10 @@ fn emit_function_list(self_exe: &Path, spec: &Path, args: &PipelineArgs) -> Vec<
 
 /// Append the shared doc-render flags (docfx / logo / favicon / extra-docs).
 fn push_doc_flags(argv: &mut Vec<std::ffi::OsString>, doc: &DocOpts<'_>) {
+    if let Some(inventory) = doc.implementation_inventory {
+        argv.push(os("--implementation-inventory"));
+        argv.push(osstr(inventory));
+    }
     if doc.docfx {
         argv.push(os("--docfx"));
     }
@@ -296,6 +308,50 @@ fn load_function_names(path: &Path) -> Vec<String> {
         std::process::exit(2);
     });
     entries.into_iter().map(|e| e.name).collect()
+}
+
+fn resolve_inventory_path(explicit: Option<&Path>, manifest_output: &Path) -> Option<PathBuf> {
+    explicit.map(PathBuf::from).or_else(|| {
+        let candidate = manifest_output
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("implementation_inventory.json");
+        candidate.exists().then_some(candidate)
+    })
+}
+
+fn load_model_mappings(path: Option<&Path>, impl_lang: &str) -> HashMap<String, String> {
+    let Some(path) = path else {
+        return HashMap::new();
+    };
+    let inventory = match load_inventory(path) {
+        Ok(inventory) => inventory,
+        Err(e) => {
+            eprintln!("warning: {e}");
+            return HashMap::new();
+        }
+    };
+
+    let mut mappings = HashMap::new();
+    for entry in inventory.functions {
+        if !entry.lang.eq_ignore_ascii_case(impl_lang) {
+            continue;
+        }
+        let Some(model) = entry.models else {
+            continue;
+        };
+        if let Some(existing) = mappings.get(&model) {
+            if existing != &entry.name {
+                eprintln!(
+                    "warning: model {model} maps to both {existing} and {}; using {existing}",
+                    entry.name
+                );
+            }
+        } else {
+            mappings.insert(model, entry.name);
+        }
+    }
+    mappings
 }
 
 /// Run a pretty-specs (self) subcommand; abort the pipeline on failure.

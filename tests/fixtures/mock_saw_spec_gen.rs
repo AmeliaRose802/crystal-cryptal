@@ -89,8 +89,13 @@ fn main() {
     let is_missing = impl_name.contains("missing");
     let is_disproved = !is_missing && env::var_os("MOCK_SAW_SPEC_GEN_DISPROVE").is_some();
     let (status, verdict, reason) = if is_missing {
+        let status = if env::var_os("MOCK_SAW_SPEC_GEN_INCONCLUSIVE_MISSING").is_some() {
+            ""
+        } else {
+            "\"status\": \"not_attempted\","
+        };
         (
-            "\"status\": \"not_attempted\",",
+            status,
             "UNKNOWN",
             "\"message\": \"no matching implementation\",",
         )
