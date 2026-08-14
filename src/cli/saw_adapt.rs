@@ -148,7 +148,8 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
         );
     }
 
-    let mut functions_map = serde_json::Map::new();
+    result_files.sort();
+    let mut aggregated = std::collections::BTreeMap::new();
 
     for path in &result_files {
         let text = match std::fs::read_to_string(path) {
@@ -187,8 +188,19 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
                 serde_json::json!({ lang: lang_entry }),
             );
         }
-        functions_map.insert(fn_name, serde_json::Value::Object(entry));
+        let precedence = result_precedence(&value);
+        let replace = aggregated
+            .get(&fn_name)
+            .is_none_or(|(current, _)| precedence > *current);
+        if replace {
+            aggregated.insert(fn_name, (precedence, serde_json::Value::Object(entry)));
+        }
     }
+
+    let functions_map: serde_json::Map<String, serde_json::Value> = aggregated
+        .into_iter()
+        .map(|(name, (_, entry))| (name, entry))
+        .collect();
 
     let fn_count = functions_map.len();
     // Preserve any existing `properties` section so a prior
@@ -207,6 +219,21 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
         fn_count,
         if fn_count == 1 { "" } else { "s" }
     );
+}
+
+fn result_precedence(value: &serde_json::Value) -> u8 {
+    let raw = value
+        .get("status")
+        .or_else(|| value.get("verdict"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("not_run")
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "verified" | "q.e.d." | "valid" | "equivalent" => 4,
+        "counterexample" | "disproved" | "not equivalent" | "invalid" | "sat" => 3,
+        "timeout" | "failed" | "error" | "unknown" => 2,
+        _ => 1,
+    }
 }
 
 fn extract_fn_name(value: &serde_json::Value, path: &Path) -> String {

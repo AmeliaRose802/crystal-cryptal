@@ -147,6 +147,140 @@ fn pipeline_forwards_current_cli_shape_and_supports_repeated_directories() {
 }
 
 #[test]
+fn pipeline_maps_cryptol_models_to_implementation_names() {
+    let project = TestProject::new("model-mapping");
+    let inventory = project.root.join("implementation_inventory.json");
+    fs::write(
+        &inventory,
+        r#"{
+  "functions": [
+    {
+      "name": "cppPipelineIdentity",
+      "lang": "cpp",
+      "file": "impl-b/nested/b_match.cpp",
+      "models": "pipelineIdentity"
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+
+    let output = project
+        .command()
+        .arg("--implementation-inventory")
+        .arg(&inventory)
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let log = fs::read_to_string(&project.invocation_log).unwrap();
+    for invocation in log.lines() {
+        let args: Vec<_> = invocation.split('\u{1f}').collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--cryptol-fn", "pipelineIdentity"]),
+            "model name was not forwarded to --cryptol-fn:\n{invocation}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--function", "cppPipelineIdentity"]),
+            "mapped implementation name was not forwarded to --function:\n{invocation}"
+        );
+    }
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&project.manifest).unwrap()).unwrap();
+    assert_eq!(
+        manifest["functions"]["pipelineIdentity"]["overall"]["status"],
+        "proven"
+    );
+}
+
+#[test]
+fn adapter_keeps_the_strongest_result_across_translation_units() {
+    let project = TestProject::new("best-wins-adapter");
+    let results = project.root.join("multi-tu-results");
+    write_result(
+        &results.join("a-defining-tu/result.json"),
+        "verifiedLeaf",
+        "VERIFIED",
+        "decision.cpp",
+    );
+    write_result(
+        &results.join("z-caller-tu/result.json"),
+        "verifiedLeaf",
+        "UNKNOWN",
+        "controller.cpp",
+    );
+    write_result(
+        &results.join("b-defining-tu/result.json"),
+        "disprovedLeaf",
+        "DISPROVED",
+        "decision.cpp",
+    );
+    write_result(
+        &results.join("y-caller-tu/result.json"),
+        "disprovedLeaf",
+        "UNKNOWN",
+        "auth.cpp",
+    );
+    let manifest_path = project.root.join("adapted-manifest.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pretty-specs"))
+        .arg("--adapt-saw-results")
+        .arg(&results)
+        .arg("--manifest-output")
+        .arg(&manifest_path)
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
+    assert_eq!(
+        manifest["functions"]["verifiedLeaf"]["overall"]["status"],
+        "proven"
+    );
+    assert_eq!(
+        manifest["functions"]["verifiedLeaf"]["by_language"]["cpp"]["impl_file"],
+        "decision.cpp"
+    );
+    assert_eq!(
+        manifest["functions"]["disprovedLeaf"]["overall"]["status"],
+        "failed"
+    );
+    assert_eq!(
+        manifest["functions"]["disprovedLeaf"]["by_language"]["cpp"]["impl_file"],
+        "decision.cpp"
+    );
+}
+
+#[test]
+fn pipeline_continues_after_an_inconclusive_caller_translation_unit() {
+    let project = TestProject::new("inconclusive-caller");
+    let output = project
+        .command()
+        .env("MOCK_SAW_SPEC_GEN_INCONCLUSIVE_MISSING", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let log = fs::read_to_string(&project.invocation_log).unwrap();
+    assert_eq!(
+        log.lines().count(),
+        2,
+        "the defining TU must still be tried after an inconclusive caller TU\n{log}"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&project.manifest).unwrap()).unwrap();
+    assert_eq!(
+        manifest["functions"]["pipelineIdentity"]["overall"]["status"],
+        "proven"
+    );
+}
+
+#[test]
 fn pipeline_fails_before_adapting_unusable_verification_results() {
     let project = TestProject::new("hard-failure");
     let output = project
@@ -203,6 +337,19 @@ fn disproved_result_is_preserved_as_a_proof_outcome() {
     let status = &manifest["functions"]["pipelineIdentity"]["overall"];
     assert_eq!(status["status"], "failed");
     assert_eq!(status["reason"], "counterexample found");
+}
+
+fn write_result(path: &Path, cryptol_fn: &str, verdict: &str, impl_file: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let result = serde_json::json!({
+        "schema_version": "1",
+        "side": "cpp",
+        "function": cryptol_fn,
+        "cryptol_fn": cryptol_fn,
+        "verdict": verdict,
+        "impl_file": impl_file,
+    });
+    fs::write(path, serde_json::to_string_pretty(&result).unwrap()).unwrap();
 }
 
 fn mock_saw_spec_gen() -> &'static Path {

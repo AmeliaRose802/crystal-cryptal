@@ -5,6 +5,7 @@ mod config;
 mod inputs;
 mod result;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -37,12 +38,14 @@ struct VerifyContext<'a> {
     args: &'a PipelineArgs,
     saw_program: &'a str,
     saw_leading_args: &'a [String],
+    model_mappings: &'a HashMap<String, String>,
     is_rust: bool,
 }
 
 pub(super) fn run(
     spec: &Path,
     functions: &[String],
+    model_mappings: &HashMap<String, String>,
     args: &PipelineArgs,
 ) -> Result<VerificationSummary, String> {
     let impl_files = expand_impl_files(&args.impl_files, &args.impl_lang)?;
@@ -55,6 +58,7 @@ pub(super) fn run(
         args,
         saw_program: &saw_program,
         saw_leading_args: &saw_leading_args,
+        model_mappings,
         is_rust: args.impl_lang == "rust",
     };
 
@@ -87,7 +91,12 @@ pub(super) fn run(
 
 fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut VerificationSummary) {
     let out_dir = context.args.verify_output.join(format!("out_{name}"));
-    let mut last_not_attempted = None;
+    let implementation_name = context
+        .model_mappings
+        .get(name)
+        .map(String::as_str)
+        .unwrap_or(name);
+    let mut best_result = None;
     let mut attempt_errors = Vec::new();
 
     for impl_file in context.impl_files {
@@ -98,7 +107,7 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
             continue;
         }
 
-        let argv = build_argv(context, name, impl_file, &out_dir);
+        let argv = build_argv(context, name, implementation_name, impl_file, &out_dir);
         let status = Command::new(context.saw_program).args(&argv).status();
         let status_text = match &status {
             Ok(status) if status.success() => "exit 0".to_string(),
@@ -107,37 +116,25 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
         };
 
         match read_result(&out_dir) {
-            Ok(ParsedResult {
-                kind: ResultKind::Verified,
-                ..
-            }) => {
-                eprintln!(" verified");
-                summary.verified += 1;
-                return;
-            }
-            Ok(ParsedResult {
-                kind: ResultKind::ProofFailed,
-                ..
-            }) => {
-                eprintln!(" proof failed");
-                summary.proof_failures += 1;
-                return;
-            }
-            Ok(ParsedResult {
-                kind: ResultKind::Unknown,
-                ..
-            }) => {
-                eprintln!(" inconclusive");
-                summary.proof_failures += 1;
-                return;
-            }
-            Ok(ParsedResult {
-                kind: ResultKind::NotAttempted,
-                text,
-            }) => {
-                eprintln!(" no matching symbol");
-                last_not_attempted = Some(text);
-            }
+            Ok(result) => match result.kind {
+                ResultKind::Verified => {
+                    eprintln!(" verified");
+                    summary.verified += 1;
+                    return;
+                }
+                ResultKind::ProofFailed => {
+                    eprintln!(" proof failed");
+                    retain_preferred_result(&mut best_result, result);
+                }
+                ResultKind::Unknown => {
+                    eprintln!(" inconclusive");
+                    retain_preferred_result(&mut best_result, result);
+                }
+                ResultKind::NotAttempted => {
+                    eprintln!(" no matching symbol");
+                    retain_preferred_result(&mut best_result, result);
+                }
+            },
             Err(result_error) => {
                 eprintln!(" ERROR ({status_text})");
                 attempt_errors.push(format!(
@@ -148,22 +145,32 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
         }
     }
 
-    if attempt_errors.is_empty()
-        && let Some(result) = last_not_attempted
-    {
-        if context.args.strict_on_missing {
-            summary.pipeline_errors += 1;
-            write_error_result(
-                &out_dir,
-                name,
-                &context.args.impl_lang,
-                "no matching implementation symbol was found (--strict-on-missing)",
-            );
-        } else {
-            summary.not_attempted += 1;
-            restore_result(&out_dir, &result);
+    if let Some(result) = best_result {
+        match result.kind {
+            ResultKind::ProofFailed | ResultKind::Unknown => {
+                summary.proof_failures += 1;
+                restore_result(&out_dir, &result.text);
+                return;
+            }
+            ResultKind::NotAttempted if attempt_errors.is_empty() => {
+                if context.args.strict_on_missing {
+                    summary.pipeline_errors += 1;
+                    write_error_result(
+                        &out_dir,
+                        implementation_name,
+                        name,
+                        &context.args.impl_lang,
+                        "no matching implementation symbol was found (--strict-on-missing)",
+                    );
+                } else {
+                    summary.not_attempted += 1;
+                    restore_result(&out_dir, &result.text);
+                }
+                return;
+            }
+            ResultKind::NotAttempted => {}
+            ResultKind::Verified => unreachable!("verified results return immediately"),
         }
-        return;
     }
 
     summary.pipeline_errors += 1;
@@ -175,12 +182,37 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
             attempt_errors.join("\n")
         )
     };
-    write_error_result(&out_dir, name, &context.args.impl_lang, &message);
+    write_error_result(
+        &out_dir,
+        implementation_name,
+        name,
+        &context.args.impl_lang,
+        &message,
+    );
+}
+
+fn retain_preferred_result(best: &mut Option<ParsedResult>, candidate: ParsedResult) {
+    let replace = best
+        .as_ref()
+        .is_none_or(|current| result_precedence(candidate.kind) > result_precedence(current.kind));
+    if replace {
+        *best = Some(candidate);
+    }
+}
+
+fn result_precedence(kind: ResultKind) -> u8 {
+    match kind {
+        ResultKind::Verified => 4,
+        ResultKind::ProofFailed => 3,
+        ResultKind::Unknown => 2,
+        ResultKind::NotAttempted => 1,
+    }
 }
 
 fn build_argv(
     context: &VerifyContext<'_>,
-    name: &str,
+    cryptol_fn: &str,
+    implementation_name: &str,
     impl_file: &Path,
     out_dir: &Path,
 ) -> Vec<String> {
@@ -193,8 +225,8 @@ fn build_argv(
         argv.extend(["--cpp-file".into(), path_str(impl_file)]);
     }
     argv.extend(["--cryptol-spec".into(), path_str(context.spec)]);
-    argv.extend(["--cryptol-fn".into(), name.to_string()]);
-    argv.extend(["--function".into(), name.to_string()]);
+    argv.extend(["--cryptol-fn".into(), cryptol_fn.to_string()]);
+    argv.extend(["--function".into(), implementation_name.to_string()]);
     argv.extend(["--output".into(), path_str(out_dir)]);
     argv.push(format!("--config={}", path_str(context.config)));
 
