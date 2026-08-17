@@ -98,20 +98,26 @@ pub(super) fn render_failure_details_callout(status: &Option<ProofStatus>) -> Op
 
 /// Render a "Verify this yourself" section.
 pub(super) fn render_verify_command_section(status: &Option<ProofStatus>) -> Option<String> {
-    let (verify_command, verify_script) = match status {
+    let (verify_command, verify_script, verify_script_body) = match status {
         Some(ProofStatus::Proven {
             verify_command,
             verify_script,
+            verify_script_body,
             ..
         })
         | Some(ProofStatus::Failed {
             verify_command,
             verify_script,
+            verify_script_body,
             ..
-        }) => (verify_command.as_deref(), verify_script.as_deref()),
+        }) => (
+            verify_command.as_deref(),
+            verify_script.as_deref(),
+            verify_script_body.as_deref(),
+        ),
         _ => return None,
     };
-    if verify_command.is_none() && verify_script.is_none() {
+    if verify_command.is_none() && verify_script.is_none() && verify_script_body.is_none() {
         return None;
     }
 
@@ -131,24 +137,31 @@ pub(super) fn render_verify_command_section(status: &Option<ProofStatus>) -> Opt
     {
         let _ = writeln!(out, "Script: `{script}`\n");
     }
+    if let Some(body) = verify_script_body {
+        let _ = writeln!(out, "<details><summary>SAW verification script</summary>\n");
+        let _ = writeln!(out, "```sawscript\n{}\n```\n", body.trim_end());
+        let _ = writeln!(out, "</details>\n");
+    }
     Some(out)
 }
 
 /// Render an expanded "Proof details" blockquote for `Proven` statuses that
 /// carry override or bounded-loop metadata.
 pub(super) fn render_proof_details_callout(status: &Option<ProofStatus>) -> Option<String> {
-    let (solver, time_secs, overrides, iterations) = match status {
+    let (solver, time_secs, overrides, iterations, override_specs) = match status {
         Some(ProofStatus::Proven {
             solver,
             time_secs,
             overrides,
             iterations,
+            override_specs,
             ..
         }) => (
             solver.as_str(),
             *time_secs,
             overrides.as_slice(),
             *iterations,
+            override_specs,
         ),
         _ => return None,
     };
@@ -187,6 +200,16 @@ pub(super) fn render_proof_details_callout(status: &Option<ProofStatus>) -> Opti
         let _ = writeln!(out, "> Solver wall-clock: {t:.2}s.");
     }
     out.push('\n');
+    for o in overrides {
+        if let Some(spec) = override_specs.get(o) {
+            let _ = writeln!(
+                out,
+                "<details><summary>Override spec: <code>{o}</code></summary>\n"
+            );
+            let _ = writeln!(out, "```sawscript\n{}\n```\n", spec.trim_end());
+            let _ = writeln!(out, "</details>\n");
+        }
+    }
     Some(out)
 }
 
@@ -243,6 +266,8 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                verify_script_body: None,
+                override_specs: std::collections::HashMap::new(),
             })),
             "✓"
         );
@@ -253,6 +278,7 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                verify_script_body: None,
             })),
             "✗"
         );
@@ -270,6 +296,8 @@ mod tests {
             iterations: None,
             verify_command: None,
             verify_script: None,
+            verify_script_body: None,
+            override_specs: std::collections::HashMap::new(),
         });
         assert!(render_proof_details_callout(&status).is_none());
 
@@ -281,6 +309,7 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                verify_script_body: None,
             }))
             .is_none()
         );
@@ -296,6 +325,8 @@ mod tests {
             iterations: Some(4),
             verify_command: None,
             verify_script: None,
+            verify_script_body: None,
+            override_specs: std::collections::HashMap::new(),
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(out.contains("Proof details"), "header missing: {out}");
@@ -322,6 +353,8 @@ mod tests {
             iterations: Some(1),
             verify_command: None,
             verify_script: None,
+            verify_script_body: None,
+            override_specs: std::collections::HashMap::new(),
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(
@@ -332,6 +365,38 @@ mod tests {
     }
 
     #[test]
+    fn proof_details_callout_renders_override_spec_accordion() {
+        let mut specs = std::collections::HashMap::new();
+        specs.insert(
+            "memcpy".to_string(),
+            "let memcpy_spec = do { ptr <- llvm_alloc (llvm_int 8); };".to_string(),
+        );
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: None,
+            overrides: vec!["memcpy".into(), "operator new".into()],
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
+            verify_script_body: None,
+            override_specs: specs,
+        });
+        let out = render_proof_details_callout(&status).expect("callout present");
+        assert!(
+            out.contains("<details><summary>Override spec: <code>memcpy</code></summary>"),
+            "override spec accordion missing: {out}"
+        );
+        assert!(
+            out.contains("let memcpy_spec"),
+            "override spec body missing: {out}"
+        );
+        assert!(
+            !out.contains("<details><summary>Override spec: <code>operator new</code>"),
+            "accordion shown for override without spec: {out}"
+        );
+    }
+
+    #[test]
     fn failure_details_callout_omitted_without_diagnostics() {
         let status = Some(ProofStatus::Failed {
             reason: "error during verification".into(),
@@ -339,6 +404,7 @@ mod tests {
             log_excerpt: None,
             verify_command: None,
             verify_script: None,
+            verify_script_body: None,
         });
         assert!(render_failure_details_callout(&status).is_none());
 
@@ -350,6 +416,8 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                verify_script_body: None,
+                override_specs: std::collections::HashMap::new(),
             }))
             .is_none()
         );
@@ -364,6 +432,7 @@ mod tests {
             log_excerpt: Some("LLVM verification failed at line 42".into()),
             verify_command: None,
             verify_script: None,
+            verify_script_body: None,
         });
         let out = render_failure_details_callout(&status).expect("callout present");
         assert!(out.contains("Why this failed"), "header missing: {out}");
@@ -381,6 +450,55 @@ mod tests {
             "log fold missing: {out}"
         );
         assert!(out.contains("line 42"), "log body missing: {out}");
+    }
+
+    #[test]
+    fn verify_command_section_renders_script_body_accordion() {
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: None,
+            overrides: vec![],
+            iterations: None,
+            verify_command: Some("saw verify.saw".into()),
+            verify_script: Some("verify.saw".into()),
+            verify_script_body: Some(
+                "import \"SDEP.cry\"\nlet spec = do { ... };\nprove_print z3 spec;".into(),
+            ),
+            override_specs: std::collections::HashMap::new(),
+        });
+        let out = render_verify_command_section(&status).expect("section present");
+        assert!(
+            out.contains("<details><summary>SAW verification script</summary>"),
+            "script body accordion missing: {out}"
+        );
+        assert!(
+            out.contains("import \"SDEP.cry\""),
+            "script body content missing: {out}"
+        );
+        assert!(
+            out.contains("```sawscript"),
+            "sawscript fence missing: {out}"
+        );
+    }
+
+    #[test]
+    fn verify_command_section_shown_for_script_body_only() {
+        // verify_script_body alone (no command/path) should still produce a section.
+        let status = Some(ProofStatus::Proven {
+            solver: "z3".into(),
+            time_secs: None,
+            overrides: vec![],
+            iterations: None,
+            verify_command: None,
+            verify_script: None,
+            verify_script_body: Some("prove_print z3 spec;".into()),
+            override_specs: std::collections::HashMap::new(),
+        });
+        let out = render_verify_command_section(&status).expect("section present");
+        assert!(
+            out.contains("<details><summary>SAW verification script</summary>"),
+            "script body accordion missing: {out}"
+        );
     }
 
     #[test]

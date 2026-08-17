@@ -1,5 +1,7 @@
 // IR: typed intermediate representation of a Cryptol spec.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 mod manifest;
@@ -35,6 +37,17 @@ pub enum ProofStatus {
         /// absent — the page can synthesise `saw <path>`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        /// Full text of the generated SAW script. When present, rendered as
+        /// a collapsible accordion on the "Verify this yourself" section so
+        /// readers can inspect the exact script without leaving the page.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_script_body: Option<String>,
+        /// Maps each override name to its full spec text (the `llvm_spec` /
+        /// `mir_spec` body). Rendered alongside the override name list in the
+        /// "Proof details" accordion so readers can see what each override
+        /// commits to without consulting the raw SAW script.
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        override_specs: HashMap<String, String>,
     },
     Assumed,
     Failed {
@@ -55,6 +68,11 @@ pub enum ProofStatus {
         verify_command: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        /// Full text of the SAW script that was run when the proof failed.
+        /// Rendered as a collapsible accordion so readers can inspect the
+        /// exact script.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_script_body: Option<String>,
     },
     NotAttempted,
 }

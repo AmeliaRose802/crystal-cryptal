@@ -23,6 +23,10 @@ pub(super) enum ManifestEntry {
         verify_command: Option<String>,
         #[serde(default)]
         verify_script: Option<String>,
+        #[serde(default)]
+        verify_script_body: Option<String>,
+        #[serde(default)]
+        override_specs: HashMap<String, String>,
     },
     Assumed,
     Failed {
@@ -35,6 +39,8 @@ pub(super) enum ManifestEntry {
         verify_command: Option<String>,
         #[serde(default)]
         verify_script: Option<String>,
+        #[serde(default)]
+        verify_script_body: Option<String>,
     },
     NotAttempted,
 }
@@ -49,6 +55,8 @@ impl From<ManifestEntry> for ProofStatus {
                 iterations,
                 verify_command,
                 verify_script,
+                verify_script_body,
+                override_specs,
             } => ProofStatus::Proven {
                 solver,
                 time_secs,
@@ -56,6 +64,8 @@ impl From<ManifestEntry> for ProofStatus {
                 iterations,
                 verify_command,
                 verify_script,
+                verify_script_body,
+                override_specs,
             },
             ManifestEntry::Assumed => ProofStatus::Assumed,
             ManifestEntry::Failed {
@@ -64,12 +74,14 @@ impl From<ManifestEntry> for ProofStatus {
                 log_excerpt,
                 verify_command,
                 verify_script,
+                verify_script_body,
             } => ProofStatus::Failed {
                 reason,
                 counterexample,
                 log_excerpt,
                 verify_command,
                 verify_script,
+                verify_script_body,
             },
             ManifestEntry::NotAttempted => ProofStatus::NotAttempted,
         }
