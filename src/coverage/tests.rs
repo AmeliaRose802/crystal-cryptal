@@ -119,7 +119,7 @@ fn impl_only_function_shows_up_as_unverified() {
             name: "sha256".into(),
             lang: "cpp".into(),
             symbol: None,
-            file: Some("cpp/src/sha256.cpp".into()),
+            file: Some("/tmp/build/cpp/src/sha256.cpp".into()),
             models: None,
             models_note: None,
             composes: vec![],
@@ -367,6 +367,29 @@ fn render_matrix_emits_all_sections() {
     assert!(md.contains("📄 Spec-only"));
     assert!(md.contains("sha256"));
     assert!(md.contains("Placeholder."));
+    assert!(md.contains("Reason codes"));
+    assert!(md.contains("([source](cpp/src/sha256.cpp))"));
+    assert!(md.contains("Verified return value and post-state"));
+    assert!(!md.contains("`z3`"));
+}
+
+#[test]
+fn render_matrix_omits_reason_codes_without_structured_reasons() {
+    let items = vec![mk_fn("proven", Some(proven(None)))];
+    let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
+    let ledger = build_ledger(
+        &modules,
+        &ImplementationInventory::default(),
+        &CoverageConfig::default(),
+    );
+
+    let md = render_coverage_matrix(&ledger);
+
+    assert!(!md.contains("Reason codes"), "matrix: {md}");
+    assert!(
+        md.contains("| Function | Source | Maps to | Notes |"),
+        "matrix: {md}"
+    );
 }
 
 #[test]
