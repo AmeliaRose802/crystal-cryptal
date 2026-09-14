@@ -265,24 +265,37 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
         }
         let _ = writeln!(out, "## {} {}\n", badge.emoji(), badge.label());
         let _ = writeln!(out, "{}\n", section_lede(badge));
-        let _ = writeln!(
-            out,
-            "| Function | Source | Maps to | Reason codes | Notes |"
-        );
-        let _ = writeln!(
-            out,
-            "|----------|--------|---------|--------------|-------|"
-        );
+        let has_reason_codes = rows.iter().any(|entry| !entry.reason_codes.is_empty());
+        if has_reason_codes {
+            let _ = writeln!(
+                out,
+                "| Function | Source | Maps to | Reason codes | Notes |"
+            );
+            let _ = writeln!(
+                out,
+                "|----------|--------|---------|--------------|-------|"
+            );
+        } else {
+            let _ = writeln!(out, "| Function | Source | Maps to | Notes |");
+            let _ = writeln!(out, "|----------|--------|---------|-------|");
+        }
         for entry in rows {
             let function_cell = function_link(entry);
             let source_cell = source_cell(entry);
             let maps_cell = maps_cell(entry);
-            let reason_cell = reason_codes_cell(entry);
             let notes_cell = notes_cell(entry);
-            let _ = writeln!(
-                out,
-                "| {function_cell} | {source_cell} | {maps_cell} | {reason_cell} | {notes_cell} |"
-            );
+            if has_reason_codes {
+                let reason_cell = reason_codes_cell(entry);
+                let _ = writeln!(
+                    out,
+                    "| {function_cell} | {source_cell} | {maps_cell} | {reason_cell} | {notes_cell} |"
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "| {function_cell} | {source_cell} | {maps_cell} | {notes_cell} |"
+                );
+            }
         }
         out.push('\n');
     }
@@ -350,11 +363,16 @@ fn source_cell(entry: &LedgerEntry) -> String {
         LedgerSource::ImplementationOnly => "impl",
         LedgerSource::Both => "model + impl",
     };
-    match (&entry.impl_lang, &entry.module) {
+    let source = match (&entry.impl_lang, &entry.module) {
         (Some(lang), Some(module)) => format!("{kind} ({module} ↔ {lang})"),
         (Some(lang), None) => format!("{kind} ({lang})"),
         (None, Some(module)) => format!("{kind} ({module})"),
         (None, None) => kind.to_string(),
+    };
+    if let Some(file) = &entry.impl_file {
+        format!("{source} ([source]({}))", source_path(file))
+    } else {
+        source
     }
 }
 
@@ -414,18 +432,29 @@ fn notes_cell(entry: &LedgerEntry) -> String {
     if let Some(note) = &entry.assumption_note {
         parts.push(escape_cell(note));
     }
-    if let Some(file) = &entry.impl_file {
-        parts.push(format!("`{}`", file));
-    }
     if let Some(proof) = &entry.proof {
         match proof {
             crate::ir::ProofStatus::Proven {
-                solver, iterations, ..
+                overrides,
+                iterations,
+                ..
             } => {
                 if let Some(n) = iterations {
-                    parts.push(format!("`{solver}`, ≤{n} iters"));
+                    parts.push(format!(
+                        "Verified return value and post-state for ≤{n} iterations"
+                    ));
                 } else {
-                    parts.push(format!("`{solver}`"));
+                    parts.push("Verified return value and post-state".into());
+                }
+                if !overrides.is_empty() {
+                    parts.push(format!(
+                        "assumes callees {}",
+                        overrides
+                            .iter()
+                            .map(|name| format!("`{name}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
                 }
             }
             crate::ir::ProofStatus::Assumed => parts.push("assumed".into()),
@@ -439,6 +468,30 @@ fn notes_cell(entry: &LedgerEntry) -> String {
         "—".to_string()
     } else {
         parts.join(" · ")
+    }
+}
+fn source_path(file: &str) -> String {
+    let path = std::path::Path::new(file);
+    let relative = std::env::current_dir()
+        .ok()
+        .and_then(|dir| path.strip_prefix(dir).ok())
+        .unwrap_or(path);
+    if relative.is_relative() {
+        return relative.to_string_lossy().replace('\\', "/");
+    }
+    let repo_path: std::path::PathBuf = path
+        .components()
+        .skip_while(|component| {
+            !matches!(component.as_os_str().to_str(), Some("cpp" | "rust" | "src"))
+        })
+        .collect();
+    if repo_path.as_os_str().is_empty() {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        repo_path.to_string_lossy().replace('\\', "/")
     }
 }
 
