@@ -281,6 +281,8 @@ module CoverageAcceptance where
 provenModel : Bit -> Bit
 provenModel x = x
 
+// C++ body:
+//   if (!ready) return false;
 unverifiedModel : Bit -> Bit
 unverifiedModel x = x
 
@@ -427,6 +429,7 @@ private
         "<details><summary>Complete verifier diagnostics</summary>\n\n```text\nError: unsupported type: %reference\nUnknown type alias Ident \"reference\"\n```"
     ));
     assert!(unverified_page.contains("aria-label=\"Copy verifier log\""));
+    assert!(unverified_page.contains("```cpp\n  if (!ready) return false;\n```"));
     fs::write(dir.join("coverage.md"), &matrix).unwrap();
     let home = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(home.contains(&shared), "home and coverage content diverged");
@@ -517,6 +520,11 @@ fn assert_docfx_coverage_table(dir: &Path) {
     ));
     assert!(function_html.contains("Complete verifier diagnostics"));
     assert!(function_html.contains("aria-label=\"Copy verifier log\""));
+    assert!(
+        function_html.contains("<code class=\"lang-cpp\">")
+            || function_html.contains("<code class=\"language-cpp\">"),
+        "C++ implementation body was not syntax highlighted"
+    );
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

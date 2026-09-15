@@ -100,4 +100,15 @@ fn omits_the_section_when_no_embedded_script_is_available() {
         proof_script: None,
     });
     assert!(render_saw_explanation(&status).is_none());
+    assert!(render_generated_script(&status).is_none());
+}
+
+#[test]
+fn renders_the_complete_embedded_script_in_one_collapsed_accordion() {
+    let rendered = render_generated_script(&proven_with_script(SCRIPT)).unwrap();
+    assert!(rendered.contains("Generated SAW verification script"));
+    assert!(rendered.contains("Show complete generated script · includes 3 trusted contracts"));
+    assert!(rendered.contains("// Step 5: Equivalence spec"));
+    assert_eq!(rendered.matches("```saw").count(), 1);
+    assert!(rendered.contains("without a local <code>verify_out</code> directory"));
 }

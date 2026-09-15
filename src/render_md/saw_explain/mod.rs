@@ -9,17 +9,7 @@ use parse::{SawContract, execute_arguments, parse_proof_setup, quoted_fresh_vari
 /// Turn saw-spec-gen's stable step markers into an approachable, auditable
 /// account of the assumptions between compiled code and its mathematical model.
 pub(super) fn render_saw_explanation(status: &Option<ProofStatus>) -> Option<String> {
-    let script = match status {
-        Some(ProofStatus::Proven {
-            proof_script: Some(script),
-            ..
-        })
-        | Some(ProofStatus::Failed {
-            proof_script: Some(script),
-            ..
-        }) => script,
-        _ => return None,
-    };
+    let script = proof_script(status)?;
     let setup = parse_proof_setup(script);
     if setup.bitcode.is_none()
         && setup.extern_overrides.is_empty()
@@ -80,6 +70,43 @@ pub(super) fn render_saw_explanation(status: &Option<ProofStatus>) -> Option<Str
     }
 
     Some(out)
+}
+
+/// Preserve the complete verifier input, not only the extracted explanatory
+/// excerpts.  This is intentionally generic so property and function pages
+/// share the same self-contained audit artifact.
+pub(super) fn render_generated_script(status: &Option<ProofStatus>) -> Option<String> {
+    let script = proof_script(status)?;
+    let setup = parse_proof_setup(script);
+    let contract_count = setup.extern_overrides.len() + setup.uninterpreted.len();
+    let contract_summary = match contract_count {
+        0 => String::new(),
+        1 => " · includes 1 trusted contract".into(),
+        count => format!(" · includes {count} trusted contracts"),
+    };
+    let mut out = String::new();
+    let _ = writeln!(out, "### Generated SAW verification script\n");
+    let _ = writeln!(
+        out,
+        "This is the complete script used for this verdict, embedded here so the proof remains auditable without a local <code>verify_out</code> directory.\n"
+    );
+    let summary = format!("Show complete generated script{contract_summary}");
+    render_source_details(&mut out, &summary, script);
+    Some(out)
+}
+
+fn proof_script(status: &Option<ProofStatus>) -> Option<&str> {
+    match status {
+        Some(ProofStatus::Proven {
+            proof_script: Some(script),
+            ..
+        })
+        | Some(ProofStatus::Failed {
+            proof_script: Some(script),
+            ..
+        }) => Some(script),
+        _ => None,
+    }
 }
 
 fn render_extern_contract(out: &mut String, contract: &SawContract<'_>) {
