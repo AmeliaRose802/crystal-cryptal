@@ -2,6 +2,7 @@
 // unified `proof_manifest.json` consumed by the renderer.
 
 mod diagnostic;
+mod script;
 
 use std::path::{Path, PathBuf};
 
@@ -86,6 +87,7 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             iterations,
             verify_command,
             verify_script,
+            proof_script,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("proven"));
@@ -105,6 +107,9 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
             }
+            if let Some(script) = proof_script {
+                m.insert("proof_script".into(), serde_json::json!(script));
+            }
             serde_json::Value::Object(m)
         }
         ProofStatus::Failed {
@@ -113,6 +118,7 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("failed"));
@@ -128,6 +134,9 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             }
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
+            }
+            if let Some(script) = proof_script {
+                m.insert("proof_script".into(), serde_json::json!(script));
             }
             serde_json::Value::Object(m)
         }
@@ -163,13 +172,14 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
                 continue;
             }
         };
-        let value: serde_json::Value = match serde_json::from_str(&text) {
+        let mut value: serde_json::Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("warning: cannot parse {}: {e}", path.display());
                 continue;
             }
         };
+        script::attach_proof_script(&mut value, path);
 
         let fn_name = extract_fn_name(&value, path);
         let proof_status = result_value_to_status(&value);
@@ -303,6 +313,10 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         .get("verify_script")
         .and_then(|v| v.as_str())
         .map(normalize_machine_paths);
+    let proof_script: Option<String> = value
+        .get("proof_script")
+        .and_then(|v| v.as_str())
+        .map(normalize_machine_paths);
 
     let failure_reason = || best_failure_reason(message.as_deref(), log_excerpt.as_deref());
 
@@ -314,6 +328,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             iterations,
             verify_command,
             verify_script,
+            proof_script,
         },
         "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
             ProofStatus::Failed {
@@ -322,6 +337,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
                 log_excerpt,
                 verify_command,
                 verify_script,
+                proof_script,
             }
         }
         "timeout" => ProofStatus::Failed {
@@ -330,6 +346,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
         },
         "error" | "UNKNOWN" => ProofStatus::Failed {
             reason: failure_reason().unwrap_or_else(|| "error during verification".into()),
@@ -337,6 +354,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
         },
         _ => ProofStatus::NotAttempted,
     }

@@ -35,6 +35,11 @@ pub enum ProofStatus {
         /// absent — the page can synthesise `saw <path>`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        /// Contents of the generated SAW script, captured while the verifier
+        /// artifact is still available.  The renderer uses this to explain
+        /// the proof boundary and show exact, auditable source excerpts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proof_script: Option<String>,
     },
     Assumed,
     Failed {
@@ -55,6 +60,8 @@ pub enum ProofStatus {
         verify_command: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proof_script: Option<String>,
     },
     NotAttempted,
 }

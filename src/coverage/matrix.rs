@@ -162,19 +162,26 @@ fn section_lede(badge: CoverageBadge) -> &'static str {
 }
 
 fn function_link(ledger: &Ledger, entry: &LedgerEntry) -> String {
-    if let Some(impl_name) = &entry.impl_name {
-        return entry.impl_file.as_ref().map_or_else(
-            || format!("`{impl_name}`"),
-            |file| source_link(ledger, impl_name, file),
-        );
-    }
     match (&entry.module_prefix, &entry.module) {
         (Some(prefix), Some(_)) if !prefix.is_empty() => format!(
-            "[`{name}`]({prefix}/functions/{name}.md)",
-            name = entry.name,
+            "[`{display}`]({prefix}/functions/{name}.md)",
+            display = entry.impl_name.as_deref().unwrap_or(&entry.name),
+            name = entry.name
         ),
-        (Some(_), Some(_)) => format!("[`{name}`](functions/{name}.md)", name = entry.name),
-        _ => format!("`{name}`", name = entry.name),
+        (Some(_), Some(_)) => format!(
+            "[`{display}`](functions/{name}.md)",
+            display = entry.impl_name.as_deref().unwrap_or(&entry.name),
+            name = entry.name
+        ),
+        _ => entry.impl_name.as_ref().map_or_else(
+            || format!("`{}`", entry.name),
+            |impl_name| {
+                entry.impl_file.as_ref().map_or_else(
+                    || format!("`{impl_name}`"),
+                    |file| source_link(ledger, impl_name, file),
+                )
+            },
+        ),
     }
 }
 
@@ -375,7 +382,7 @@ fn source_link(ledger: &Ledger, label: &str, file: &str) -> String {
         .unwrap_or_else(|| format!("`{label}`"))
 }
 
-fn source_url(ledger: &Ledger, path: &str) -> Option<String> {
+pub(super) fn source_url(ledger: &Ledger, path: &str) -> Option<String> {
     ledger.source_url_base.as_ref().map(|base| {
         format!(
             "{}{}",
@@ -397,7 +404,7 @@ fn escape_html(value: &str) -> String {
         .replace('\n', "&#10;")
 }
 
-fn source_path(file: &str) -> String {
+pub(super) fn source_path(file: &str) -> String {
     let path = std::path::Path::new(file);
     let relative = std::env::current_dir()
         .ok()

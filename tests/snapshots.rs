@@ -310,6 +310,7 @@ private
                     iterations: None,
                     verify_command: None,
                     verify_script: None,
+                    proof_script: None,
                 }),
                 "unverifiedModel" => Some(ProofStatus::Failed {
                     reason: "unsupported type: %reference".into(),
@@ -320,6 +321,7 @@ private
                     ),
                     verify_command: None,
                     verify_script: Some("verify_out/out_unverified/generated.saw".into()),
+                    proof_script: None,
                 }),
                 _ => None,
             };
@@ -382,9 +384,7 @@ private
     assert!(shared.contains(
         "[source](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
     ));
-    assert!(shared.contains(
-        "[`unverifiedImpl`](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
-    ));
+    assert!(shared.contains("[`unverifiedImpl`](functions/unverifiedModel.md)"));
     assert!(shared.contains(
         "implementation `unverifiedImpl` ↔ model [`unverifiedModel`](functions/unverifiedModel.md)"
     ));
@@ -418,6 +418,15 @@ private
     };
     let dir = render_to("coverage-acceptance");
     render_multi_file(&items, &symbols, &dir, &options).unwrap();
+    let unverified_page =
+        fs::read_to_string(dir.join("functions").join("unverifiedModel.md")).unwrap();
+    assert!(unverified_page.contains(
+        "**Implementation source:** `unverifiedImpl` in [`cpp/src/unverified.cpp`](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)."
+    ));
+    assert!(unverified_page.contains(
+        "<details><summary>Complete verifier diagnostics</summary>\n\n```text\nError: unsupported type: %reference\nUnknown type alias Ident \"reference\"\n```"
+    ));
+    assert!(unverified_page.contains("aria-label=\"Copy verifier log\""));
     fs::write(dir.join("coverage.md"), &matrix).unwrap();
     let home = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(home.contains(&shared), "home and coverage content diverged");
@@ -486,6 +495,11 @@ fn assert_docfx_coverage_table(dir: &Path) {
         );
         assert!(html.contains("Complete verifier diagnostics"));
         assert!(
+            html.contains("href=\"functions/unverifiedModel.html\"")
+                && html.contains("><code>unverifiedImpl</code></a>"),
+            "coverage function does not link to its detail page in {page}"
+        );
+        assert!(
             html.contains("<pre><code class=\"lang-text\">")
                 || html.contains("<pre><code class=\"language-text\">"),
             "diagnostics are not a highlighted text code block in {page}"
@@ -496,6 +510,13 @@ fn assert_docfx_coverage_table(dir: &Path) {
             "diagnostics have no copy control in {page}"
         );
     }
+    let function_html =
+        fs::read_to_string(dir.join("_site/functions/unverifiedModel.html")).unwrap();
+    assert!(function_html.contains(
+        "href=\"https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp\""
+    ));
+    assert!(function_html.contains("Complete verifier diagnostics"));
+    assert!(function_html.contains("aria-label=\"Copy verifier log\""));
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

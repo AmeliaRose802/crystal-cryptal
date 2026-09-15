@@ -20,6 +20,7 @@ mod index;
 mod mermaid;
 mod proof;
 mod properties;
+mod saw_explain;
 mod signature;
 mod single_file;
 mod types;

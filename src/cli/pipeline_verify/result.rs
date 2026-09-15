@@ -94,10 +94,15 @@ pub(super) fn enrich_result(out_dir: &Path, output: &Output, program: &str, argv
     object.entry("verify_command").or_insert_with(|| {
         serde_json::json!(normalize_machine_paths(&format_command(program, argv)))
     });
-    if !object.contains_key("verify_script")
+    if (!object.contains_key("verify_script") || !object.contains_key("proof_script"))
         && let Some(script) = find_generated_script(out_dir)
     {
-        object.insert("verify_script".into(), serde_json::json!(script));
+        object
+            .entry("verify_script")
+            .or_insert_with(|| serde_json::json!(script.path));
+        object
+            .entry("proof_script")
+            .or_insert_with(|| serde_json::json!(normalize_machine_paths(&script.contents)));
     }
 
     if let Ok(serialized) = serde_json::to_string_pretty(&value) {
@@ -207,12 +212,22 @@ fn format_command(program: &str, argv: &[String]) -> String {
         .join(" ")
 }
 
-fn find_generated_script(out_dir: &Path) -> Option<String> {
+struct GeneratedScript {
+    path: String,
+    contents: String,
+}
+
+fn find_generated_script(out_dir: &Path) -> Option<GeneratedScript> {
     let entries = std::fs::read_dir(out_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
+    let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
         if path.extension().and_then(|extension| extension.to_str()) == Some("saw") {
-            return Some(normalize_machine_paths(&path.to_string_lossy()));
+            let contents = std::fs::read_to_string(&path).ok()?;
+            return Some(GeneratedScript {
+                path: normalize_machine_paths(&path.to_string_lossy()),
+                contents,
+            });
         }
     }
     None

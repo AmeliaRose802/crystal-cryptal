@@ -81,11 +81,17 @@ fn main() {
     let cryptol_fn =
         option_value(&args, "--cryptol-fn").unwrap_or_else(|| fail("missing --cryptol-fn"));
     fs::create_dir_all(&output).unwrap();
+    fs::write(
+        output.join("generated-verify.saw"),
+        format!(
+            "// Step 1: Load bitcode\nm <- llvm_load_module \"fixture.bc\";\n\n// Step 2: Bitcode-derived extern overrides\n// override: _Mtx_lock  [declare-only]\nlet lock_spec = do {{\n    p0 <- llvm_fresh_pointer (llvm_int 8);\n    llvm_execute_func [p0];\n    llvm_return (llvm_term {{{{ 0 : [32] }}}});\n}};\nov_lock <- llvm_unsafe_assume_spec m \"_Mtx_lock\" lock_spec;\n\n// Step 3: Import Cryptol spec\n\n// Step 4: Uninterpreted primitive contracts\n// uninterpreted: fixtureEq (symbol: fixture_eq)\nlet fixtureEq_spec = do {{\n    a0 <- llvm_fresh_var \"a0\" (llvm_int 32);\n    llvm_execute_func [llvm_term a0];\n    llvm_return (llvm_term {{{{ fixtureEq a0 }}}});\n}};\nov_fixture <- llvm_unsafe_assume_spec m \"fixture_eq\" fixtureEq_spec;\n\n// Step 5: Equivalence spec — {cryptol_fn}\n"
+        ),
+    )
+    .unwrap();
 
     if env::var_os("MOCK_SAW_SPEC_GEN_VERIFY_ERROR").is_some()
         && !cpp_file.to_string_lossy().contains("missing")
     {
-        fs::write(output.join("generated-verify.saw"), "// generated proof\n").unwrap();
         let result = format!(
             "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  \"status\": \"error\",\n  \"message\": \"Loading file verify.saw\",\n  \"impl_file\": \"{}\"\n}}\n",
             escape_json(&function),

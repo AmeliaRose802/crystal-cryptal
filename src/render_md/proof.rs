@@ -89,7 +89,10 @@ pub(super) fn render_failure_details_callout(status: &Option<ProofStatus>) -> Op
         let _ = writeln!(out, "</details>\n");
     }
     if let Some(log) = log_excerpt {
-        let _ = writeln!(out, "<details><summary>Verifier log excerpt</summary>\n");
+        let _ = writeln!(
+            out,
+            "<details><summary>Complete verifier diagnostics</summary>\n"
+        );
         render_copyable_text_block(&mut out, log, "Copy verifier log");
         let _ = writeln!(out, "</details>\n");
     }
@@ -259,6 +262,7 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
             })),
             "✓"
         );
@@ -269,6 +273,7 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
             })),
             "✗"
         );
@@ -286,6 +291,7 @@ mod tests {
             iterations: None,
             verify_command: None,
             verify_script: None,
+            proof_script: None,
         });
         assert!(render_proof_details_callout(&status).is_none());
 
@@ -297,6 +303,7 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
             }))
             .is_none()
         );
@@ -312,6 +319,7 @@ mod tests {
             iterations: Some(4),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(out.contains("Proof details"), "header missing: {out}");
@@ -338,6 +346,7 @@ mod tests {
             iterations: Some(1),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(
@@ -355,6 +364,7 @@ mod tests {
             log_excerpt: None,
             verify_command: None,
             verify_script: None,
+            proof_script: None,
         });
         assert!(render_failure_details_callout(&status).is_none());
 
@@ -366,6 +376,7 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
             }))
             .is_none()
         );
@@ -380,6 +391,7 @@ mod tests {
             log_excerpt: Some("LLVM verification failed at line 42".into()),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
         });
         let out = render_failure_details_callout(&status).expect("callout present");
         assert!(out.contains("Why this failed"), "header missing: {out}");
@@ -393,7 +405,7 @@ mod tests {
         );
         assert!(out.contains("x = 0"), "counterexample body missing: {out}");
         assert!(
-            out.contains("<details><summary>Verifier log excerpt</summary>"),
+            out.contains("<details><summary>Complete verifier diagnostics</summary>"),
             "log fold missing: {out}"
         );
         assert!(out.contains("line 42"), "log body missing: {out}");

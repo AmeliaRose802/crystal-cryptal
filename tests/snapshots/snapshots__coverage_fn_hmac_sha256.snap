@@ -1,11 +1,12 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 221
 expression: content
 ---
 # `hmacSha256`  🔒
 
 > 🔒 **Trusted assumption — not proven here.** Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. Stands in for real function: `hmac_sha256`. Any proof that depends on this definition inherits that assumption.
+
+**Implementation source:** `hmac_sha256` in [`cpp/src/hmac.cpp`](https://github.com/example/protocol/blob/verification/cpp/src/hmac.cpp).
 
 ### Signature
 

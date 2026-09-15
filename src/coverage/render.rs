@@ -3,7 +3,7 @@
 use crate::ir::ProofStatus;
 
 use super::ledger::{CoverageBadge, Ledger, LedgerEntry};
-use super::matrix::reason_codes_inline;
+use super::matrix::{reason_codes_inline, source_path, source_url};
 
 /// Title-line badge for a function page. When a ledger is present and
 /// covers `name`, returns the new coverage badge; otherwise falls back
@@ -52,6 +52,20 @@ pub fn function_banner(ledger: Option<&Ledger>, name: &str) -> Option<String> {
         CoverageBadge::SpecOnly => spec_only_banner(entry),
     };
     Some(format!("> {body}\n\n"))
+}
+
+/// Link a model function page to its corresponding production implementation.
+pub fn function_implementation_source(ledger: Option<&Ledger>, name: &str) -> Option<String> {
+    let ledger = ledger?;
+    let entry = ledger.lookup(name)?;
+    let file = entry.impl_file.as_deref()?;
+    let path = source_path(file);
+    let implementation = entry.impl_name.as_deref().unwrap_or(name);
+    let location = source_url(ledger, &path)
+        .map_or_else(|| format!("`{path}`"), |url| format!("[`{path}`]({url})"));
+    Some(format!(
+        "**Implementation source:** `{implementation}` in {location}.\n\n"
+    ))
 }
 
 fn bounded_banner(entry: &LedgerEntry) -> String {

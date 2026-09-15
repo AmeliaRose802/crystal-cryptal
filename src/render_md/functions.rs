@@ -5,7 +5,10 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::coverage::{function_banner, function_title_badge, is_coverage_directive_line};
+use crate::coverage::{
+    function_banner, function_implementation_source, function_title_badge,
+    is_coverage_directive_line,
+};
 use crate::describe::auto_describe_function;
 use crate::ir::Item;
 use crate::linker::SymbolTable;
@@ -16,6 +19,7 @@ use super::proof::{
     proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
+use super::saw_explain::render_saw_explanation;
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
 use super::util::{
     anchor_for, camel_to_spaced, is_simple_constructor, prefixed_file, render_doc_body,
@@ -62,6 +66,9 @@ pub(super) fn render_function_files(
             if let Some(banner) = function_banner(options.ledger.as_ref(), name) {
                 out.push_str(&banner);
             }
+            if let Some(source) = function_implementation_source(options.ledger.as_ref(), name) {
+                out.push_str(&source);
+            }
 
             let parsed_sig = parse_signature(signature);
             let param_names = extract_param_names(body, name);
@@ -86,6 +93,9 @@ pub(super) fn render_function_files(
             }
             if let Some(callout) = render_failure_details_callout(proof_status) {
                 out.push_str(&callout);
+            }
+            if let Some(explanation) = render_saw_explanation(proof_status) {
+                out.push_str(&explanation);
             }
             if let Some(section) = render_verify_command_section(proof_status) {
                 out.push_str(&section);

@@ -56,6 +56,7 @@ fn serde_round_trip() {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
             }),
             is_private: false,
         },

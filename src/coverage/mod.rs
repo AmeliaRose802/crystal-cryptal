@@ -21,4 +21,6 @@ pub use ledger::{CoverageBadge, CoverageReason, Ledger, LedgerEntry, LedgerSourc
 #[cfg(test)]
 pub(crate) use ledger::{DirectiveKind, parse_coverage_directive};
 pub use matrix::{render_coverage_content, render_coverage_matrix};
-pub use render::{function_banner, function_status_cell, function_title_badge};
+pub use render::{
+    function_banner, function_implementation_source, function_status_cell, function_title_badge,
+};

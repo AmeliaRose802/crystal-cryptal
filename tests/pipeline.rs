@@ -144,6 +144,10 @@ fn pipeline_forwards_current_cli_shape_and_supports_repeated_directories() {
     assert_eq!(function["overall"]["status"], "proven");
     assert_eq!(function["by_language"]["cpp"]["status"], "proven");
     assert_eq!(function["by_language"]["cpp"]["impl_file"], "b_match.cpp");
+    let proof_script = function["overall"]["proof_script"].as_str().unwrap();
+    assert!(proof_script.contains("llvm_load_module \"fixture.bc\""));
+    assert!(proof_script.contains("// override: _Mtx_lock  [declare-only]"));
+    assert!(proof_script.contains("// uninterpreted: fixtureEq (symbol: fixture_eq)"));
 }
 
 #[test]
@@ -207,6 +211,11 @@ fn adapter_keeps_the_strongest_result_across_translation_units() {
         "VERIFIED",
         "decision.cpp",
     );
+    fs::write(
+        results.join("a-defining-tu/verify.saw"),
+        "// Step 1: Load bitcode\nm <- llvm_load_module \"decision.bc\";\n",
+    )
+    .unwrap();
     write_result(
         &results.join("z-caller-tu/result.json"),
         "verifiedLeaf",
@@ -245,6 +254,12 @@ fn adapter_keeps_the_strongest_result_across_translation_units() {
     assert_eq!(
         manifest["functions"]["verifiedLeaf"]["by_language"]["cpp"]["impl_file"],
         "decision.cpp"
+    );
+    assert!(
+        manifest["functions"]["verifiedLeaf"]["overall"]["proof_script"]
+            .as_str()
+            .unwrap()
+            .contains("decision.bc")
     );
     assert_eq!(
         manifest["functions"]["disprovedLeaf"]["overall"]["status"],
