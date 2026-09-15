@@ -376,6 +376,10 @@ private
     assert!(shared.contains("failed: unsupported type: %reference"));
     assert!(shared.contains("Complete verifier diagnostics — <code>unverifiedImpl</code>"));
     assert!(shared.contains(
+        "<summary>Complete verifier diagnostics — <code>unverifiedImpl</code></summary>\n\n```text\nError: unsupported type: %reference\nUnknown type alias Ident \"reference\"\n```"
+    ));
+    assert!(shared.contains("aria-label=\"Copy verifier log\""));
+    assert!(shared.contains(
         "[source](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
     ));
     assert!(shared.contains(
@@ -481,6 +485,16 @@ fn assert_docfx_coverage_table(dir: &Path) {
             "coverage table rendered as literal Markdown in {page}"
         );
         assert!(html.contains("Complete verifier diagnostics"));
+        assert!(
+            html.contains("<pre><code class=\"lang-text\">")
+                || html.contains("<pre><code class=\"language-text\">"),
+            "diagnostics are not a highlighted text code block in {page}"
+        );
+        assert!(
+            html.contains("aria-label=\"Copy verifier log\"")
+                && html.contains("navigator.clipboard.writeText"),
+            "diagnostics have no copy control in {page}"
+        );
     }
 }
 

@@ -323,10 +323,10 @@ fn render_diagnostics(out: &mut String, rows: &[&LedgerEntry]) {
         let display = entry.impl_name.as_deref().unwrap_or(&entry.name);
         let _ = writeln!(
             out,
-            "<details><summary>Complete verifier diagnostics — <code>{}</code></summary>\n\n<pre>{}</pre>",
-            escape_html(display),
-            escape_html(diagnostic)
+            "<details><summary>Complete verifier diagnostics — <code>{}</code></summary>\n",
+            escape_html(display)
         );
+        render_copyable_text_block(out, diagnostic);
         if let Some(script) = verify_script {
             let file = std::path::Path::new(script)
                 .file_name()
@@ -340,6 +340,22 @@ fn render_diagnostics(out: &mut String, rows: &[&LedgerEntry]) {
         }
         let _ = writeln!(out, "\n</details>\n");
     }
+}
+
+fn render_copyable_text_block(out: &mut String, text: &str) {
+    let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+    let _ = writeln!(out, "{fence}text\n{}\n{fence}", text.trim_end());
+    let _ = writeln!(
+        out,
+        "\n<button type=\"button\" class=\"btn btn-default btn-xs\" aria-label=\"Copy verifier log\" onclick=\"navigator.clipboard.writeText(this.previousElementSibling.textContent)\">Copy</button>"
+    );
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
 }
 
 fn model_link(entry: &LedgerEntry, model: &str) -> String {

@@ -85,15 +85,31 @@ pub(super) fn render_failure_details_callout(status: &Option<ProofStatus>) -> Op
     out.push('\n');
     if let Some(cx) = counterexample {
         let _ = writeln!(out, "<details><summary>Counterexample</summary>\n");
-        let _ = writeln!(out, "```text\n{}\n```\n", cx.trim_end());
+        render_copyable_text_block(&mut out, cx, "Copy counterexample");
         let _ = writeln!(out, "</details>\n");
     }
     if let Some(log) = log_excerpt {
         let _ = writeln!(out, "<details><summary>Verifier log excerpt</summary>\n");
-        let _ = writeln!(out, "```text\n{}\n```\n", log.trim_end());
+        render_copyable_text_block(&mut out, log, "Copy verifier log");
         let _ = writeln!(out, "</details>\n");
     }
     Some(out)
+}
+
+fn render_copyable_text_block(out: &mut String, text: &str, copy_label: &str) {
+    let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+    let _ = writeln!(out, "{fence}text\n{}\n{fence}", text.trim_end());
+    let _ = writeln!(
+        out,
+        "\n<button type=\"button\" class=\"btn btn-default btn-xs\" aria-label=\"{copy_label}\" onclick=\"navigator.clipboard.writeText(this.previousElementSibling.textContent)\">Copy</button>\n"
+    );
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Render a "Verify this yourself" section.
@@ -381,6 +397,13 @@ mod tests {
             "log fold missing: {out}"
         );
         assert!(out.contains("line 42"), "log body missing: {out}");
+        assert_eq!(
+            out.matches("navigator.clipboard.writeText").count(),
+            2,
+            "copy buttons missing: {out}"
+        );
+        assert!(out.contains("aria-label=\"Copy counterexample\""));
+        assert!(out.contains("aria-label=\"Copy verifier log\""));
     }
 
     #[test]
