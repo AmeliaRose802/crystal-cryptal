@@ -145,10 +145,12 @@ pub fn build_ledger(
     // same `name` (e.g. cpp + rust mirror of the same function) collapse
     // to one ledger row, keyed by name, listing the first language seen.
     let mut inv_by_name: BTreeMap<String, &InventoryEntry> = BTreeMap::new();
+    let mut inv_by_model: BTreeMap<String, &InventoryEntry> = BTreeMap::new();
     let mut modeled_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in &inventory.functions {
         inv_by_name.entry(entry.name.clone()).or_insert(entry);
         if let Some(model_name) = &entry.models {
+            inv_by_model.entry(model_name.clone()).or_insert(entry);
             modeled_by
                 .entry(model_name.clone())
                 .or_default()
@@ -171,7 +173,10 @@ pub fn build_ledger(
             seen.insert(name.clone());
             continue;
         }
-        let inv = inv_by_name.get(name).copied();
+        let inv = inv_by_name
+            .get(name)
+            .or_else(|| inv_by_model.get(name))
+            .copied();
         let source = if inv.is_some() {
             LedgerSource::Both
         } else {
@@ -214,6 +219,9 @@ pub fn build_ledger(
             proof: mf.proof.clone(),
         });
         seen.insert(name.clone());
+        if let Some(inv) = inv {
+            seen.insert(inv.name.clone());
+        }
     }
 
     // Implementation-only side.

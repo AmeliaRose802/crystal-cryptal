@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use pretty_specs::coverage::{
-    build_ledger, load_coverage_config, load_inventory, render_coverage_matrix,
+    CoverageConfig, ImplementationInventory, InventoryEntry, build_ledger, load_coverage_config,
+    load_inventory, render_coverage_content, render_coverage_matrix,
 };
-use pretty_specs::ir::{Item, load_proof_manifest};
+use pretty_specs::ir::{Item, ProofStatus, load_proof_manifest};
 use pretty_specs::linker::SymbolTable;
 use pretty_specs::parser::parse;
 use pretty_specs::render_md::{RenderOptions, render_multi_file, render_single_file};
@@ -245,8 +246,8 @@ fn snapshot_index_with_coverage_section() {
     render_multi_file(&items, &symbols, &dir, &opts).unwrap();
     let content = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(
-        content.contains("## Coverage at a glance"),
-        "coverage glance missing: {content}"
+        content.contains("## Coverage summary"),
+        "coverage summary missing: {content}"
     );
     assert!(
         content.contains("[Coverage Matrix](coverage.md)"),
@@ -269,6 +270,128 @@ fn coverage_md_is_written_to_output() {
     assert!(md.contains("⚠️"));
     assert!(md.contains("🧩"));
     assert!(md.contains("✅") || md.contains("🔲"));
+}
+
+#[test]
+fn home_embeds_the_filtered_coverage_report_with_unverified_first() {
+    let source = r#"
+module CoverageAcceptance where
+
+provenModel : Bit -> Bit
+provenModel x = x
+
+unverifiedModel : Bit -> Bit
+unverifiedModel x = x
+
+// @coverage trusted: external primitive contract.
+trustedModel : Bit -> Bit
+trustedModel x = x
+
+excludedHelper : Bit -> Bit
+excludedHelper x = x
+
+private
+  // @coverage exclude
+  internalPost : Bit -> Bit
+  internalPost x = x
+"#;
+    let mut items = parse(source);
+    for item in &mut items {
+        if let Item::Function {
+            name, proof_status, ..
+        } = item
+        {
+            *proof_status = match name.as_str() {
+                "provenModel" => Some(ProofStatus::Proven {
+                    solver: "z3".into(),
+                    time_secs: Some(0.2),
+                    overrides: vec![],
+                    iterations: None,
+                    verify_command: None,
+                    verify_script: None,
+                }),
+                "unverifiedModel" => Some(ProofStatus::Failed {
+                    reason: "unsupported type: %reference".into(),
+                    counterexample: None,
+                    log_excerpt: Some(
+                        "Error: unsupported type: %reference\nUnknown type alias Ident \"reference\""
+                            .into(),
+                    ),
+                    verify_command: None,
+                    verify_script: Some("verify_out/out_unverified/generated.saw".into()),
+                }),
+                _ => None,
+            };
+        }
+    }
+    let inventory = ImplementationInventory {
+        functions: vec![
+            InventoryEntry {
+                name: "provenImpl".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/proven.cpp".into()),
+                models: Some("provenModel".into()),
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec![],
+            },
+            InventoryEntry {
+                name: "unverifiedImpl".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/unverified.cpp".into()),
+                models: Some("unverifiedModel".into()),
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec![],
+            },
+        ],
+    };
+    let config = CoverageConfig {
+        exclude: vec!["excludedHelper".into()],
+        ..CoverageConfig::default()
+    };
+    let ledger = build_ledger(
+        &[("CoverageAcceptance".into(), "".into(), items.as_slice())],
+        &inventory,
+        &config,
+    );
+    assert!(
+        ledger.lookup("provenImpl").is_none(),
+        "implementation row was duplicated"
+    );
+    assert_eq!(
+        ledger.lookup("provenModel").unwrap().impl_file.as_deref(),
+        Some("cpp/src/proven.cpp")
+    );
+
+    let shared = render_coverage_content(&ledger);
+    let matrix = render_coverage_matrix(&ledger);
+    assert!(matrix.ends_with(&shared));
+    assert!(shared.find("⚠️ Implemented, unverified").unwrap() < shared.find("✅ Proven").unwrap());
+    assert!(shared.find("✅ Proven").unwrap() < shared.find("🔒 Trusted assumptions").unwrap());
+    assert!(shared.contains("failed: unsupported type: %reference"));
+    assert!(shared.contains("<summary>Complete verifier diagnostics</summary>"));
+    assert!(shared.contains("[generated SAW script](verify_out/out_unverified/generated.saw)"));
+    assert!(shared.contains("[source](cpp/src/unverified.cpp)"));
+    let tables = shared.split("## Excluded helpers").next().unwrap();
+    assert!(!tables.contains("excludedHelper"));
+    assert!(!tables.contains("internalPost"));
+
+    let symbols = SymbolTable::build(&items);
+    let options = RenderOptions {
+        ledger: Some(ledger),
+        ..RenderOptions::default()
+    };
+    let dir = render_to("coverage-acceptance");
+    render_multi_file(&items, &symbols, &dir, &options).unwrap();
+    let home = fs::read_to_string(dir.join("index.md")).unwrap();
+    assert!(home.contains(&shared), "home and coverage content diverged");
+    let functions_section = home.split("## Functions").nth(1).unwrap();
+    assert!(!functions_section.contains("excludedHelper"));
+    assert!(!functions_section.contains("internalPost"));
+    let _ = fs::remove_dir_all(dir);
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

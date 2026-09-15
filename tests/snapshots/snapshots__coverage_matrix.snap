@@ -6,7 +6,7 @@ expression: md
 
 > **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by one of five badges. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
 
-## Summary
+## Coverage summary
 
 | Badge | Meaning | Count |
 |-------|---------|-------|
@@ -14,11 +14,11 @@ expression: md
 | 🔲 | Proven (bounded) | 0 |
 | 🔒 | Trusted assumption | 2 |
 | 🧩 | ABI adapter / stand-in | 1 |
-| ⚠️ | Implemented, unverified | 6 |
+| ⚠️ | Implemented, unverified | 4 |
 | 📄 | Spec-only | 14 |
-| | **Total** | **23** |
+| | **Total** | **21** |
 
-> ⚠️ **6 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
+> ⚠️ **4 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
 
 ## ⚠️ Implemented, unverified
 
@@ -27,28 +27,26 @@ Real production functions with no proof. This is the gap.
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
 | `canonicalizePayload` | impl (cpp) ([source](cpp/src/canonical.cpp)) | `canonicalize_lp` *(bounded model only)* | `R1 unbounded`, `R2 stl-heap` | — |
-| `canonicalize_lp` | impl (cpp) ([source](cpp/src/canonical.cpp)) | `canonLenPrefixed` *(bounded model only)* | `R1 unbounded` | — |
 | `handle_provision` | impl (cpp) ([source](cpp/src/controller.cpp)) | composes `provisionKey` | `R6 compositional` | — |
-| `hmac_sha256` | impl (cpp) ([source](cpp/src/hmac.cpp)) | `hmacSha256` | `R2 stl-heap` | — |
 | [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/decisions.cpp)) | — | `R6 compositional` | — |
 | `sha256` | impl (cpp) ([source](cpp/src/sha256.cpp)) | — | `R1 unbounded` | — |
 
-## 🔒 Trusted assumption
+## 🔒 Trusted assumptions
 
 Assumed contracts for real external dependencies. These are explicit trust boundaries, not machine-checked equivalence proofs.
 
-| Function | Source | Maps to | Notes |
-|----------|--------|---------|-------|
-| [`hmacSha256`](functions/hmacSha256.md) | model (SDEP) | stands in for `hmac_sha256` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
-| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`hmacSha256`](functions/hmacSha256.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/hmac.cpp)) | `hmacSha256`; stands in for `hmac_sha256` | `R2 stl-heap` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
 
 ## 🧩 ABI adapter / stand-in
 
 Cryptol definitions with no real-code counterpart (placeholders, uninterpreted functions, ABI adapters). The notes column explains what each one stands in for.
 
-| Function | Source | Maps to | Notes |
-|----------|--------|---------|-------|
-| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model (SDEP) | stands in for `canonicalize_lp` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/canonical.cpp)) | `canonLenPrefixed` *(bounded model only)*; stands in for `canonicalize_lp` | `R1 unbounded` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
 
 ## 📄 Spec-only
 

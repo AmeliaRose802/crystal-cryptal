@@ -82,6 +82,23 @@ fn main() {
         option_value(&args, "--cryptol-fn").unwrap_or_else(|| fail("missing --cryptol-fn"));
     fs::create_dir_all(&output).unwrap();
 
+    if env::var_os("MOCK_SAW_SPEC_GEN_VERIFY_ERROR").is_some()
+        && !cpp_file.to_string_lossy().contains("missing")
+    {
+        fs::write(output.join("generated-verify.saw"), "// generated proof\n").unwrap();
+        let result = format!(
+            "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  \"status\": \"error\",\n  \"message\": \"error during verification\",\n  \"impl_file\": \"{}\"\n}}\n",
+            escape_json(&function),
+            escape_json(&cryptol_fn),
+            escape_json(&cpp_file.to_string_lossy()),
+        );
+        fs::write(output.join("result.json"), result).unwrap();
+        eprintln!("error during verification");
+        eprintln!("Error: unsupported type: %reference");
+        eprintln!("Unknown type alias Ident \\\"reference\\\" at {}:42:7", cpp_file.display());
+        std::process::exit(1);
+    }
+
     let impl_name = cpp_file
         .file_name()
         .and_then(|name| name.to_str())

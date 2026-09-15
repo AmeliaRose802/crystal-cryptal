@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
 
-use pretty_specs::coverage::{CoverageBadge, Ledger};
+use pretty_specs::coverage::{Ledger, render_coverage_content};
 use pretty_specs::ir::Item;
 use serde::Serialize;
 
@@ -143,21 +143,10 @@ pub(crate) fn render_multi_module_index(
     let _ = writeln!(out, "# Specification Modules\n");
 
     if let Some(l) = ledger {
-        let proven = l.count(CoverageBadge::Proven);
-        let bounded = l.count(CoverageBadge::ProvenBounded);
-        let trusted = l.count(CoverageBadge::TrustedAssumption);
-        let abs = l.count(CoverageBadge::AbiAdapter);
-        let unv = l.count(CoverageBadge::Unverified);
-        let spec = l.count(CoverageBadge::SpecOnly);
-        let _ = writeln!(out, "## Coverage at a glance\n");
+        out.push_str(&render_coverage_content(l));
         let _ = writeln!(
             out,
-            "✅ {proven} proven · 🔲 {bounded} bounded · 🔒 {trusted} trusted assumptions · 🧩 {abs} adapters/stand-ins · ⚠️ {unv} **unverified** · 📄 {spec} spec-only\n"
-        );
-        let _ = writeln!(
-            out,
-            "Full breakdown: [Coverage Matrix](coverage.md). Real functions \
-             that lack a proof are listed by default — silence is impossible.\n"
+            "Dedicated permalink: [Coverage Matrix](coverage.md).\n"
         );
     }
 

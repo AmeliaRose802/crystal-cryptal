@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::process::Output;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResultKind {
@@ -30,13 +31,7 @@ pub(super) fn read_result(out_dir: &Path) -> Result<ParsedResult, String> {
         | "failed" => ResultKind::ProofFailed,
         "not_attempted" | "not-attempted" | "not attempted" | "not_run" => ResultKind::NotAttempted,
         "unknown" => ResultKind::Unknown,
-        "error" => {
-            let message = value
-                .get("message")
-                .and_then(|value| value.as_str())
-                .unwrap_or("verification error");
-            return Err(format!("{} reports an error: {message}", path.display()));
-        }
+        "error" => ResultKind::ProofFailed,
         other => {
             return Err(format!(
                 "{} has unrecognized result '{other}'",
@@ -66,6 +61,139 @@ pub(super) fn restore_result(out_dir: &Path, text: &str) {
     }
 }
 
+/// Add the subprocess transcript and reproduction command to a verifier result.
+/// saw-spec-gen sometimes reports only `error during verification` in JSON while
+/// the actionable type/parser error is present on stderr, so derive the concise
+/// summary from the complete captured diagnostic.
+pub(super) fn enrich_result(out_dir: &Path, output: &Output, program: &str, argv: &[String]) {
+    let path = out_dir.join("result.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+
+    let diagnostic = subprocess_diagnostic(output);
+    if !diagnostic.is_empty() {
+        let current = object
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if is_generic_summary(current)
+            && let Some(summary) = first_actionable_error(&diagnostic)
+        {
+            object.insert("message".into(), serde_json::json!(summary));
+        }
+        object.insert("log_excerpt".into(), serde_json::json!(diagnostic));
+    }
+    object.entry("verify_command").or_insert_with(|| {
+        serde_json::json!(normalize_machine_paths(&format_command(program, argv)))
+    });
+    if !object.contains_key("verify_script")
+        && let Some(script) = find_generated_script(out_dir)
+    {
+        object.insert("verify_script".into(), serde_json::json!(script));
+    }
+
+    if let Ok(serialized) = serde_json::to_string_pretty(&value) {
+        let _ = std::fs::write(path, format!("{serialized}\n"));
+    }
+}
+
+pub(super) fn subprocess_diagnostic(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = match (stderr.trim().is_empty(), stdout.trim().is_empty()) {
+        (false, false) => format!("{}\n{}", stderr.trim_end(), stdout.trim_end()),
+        (false, true) => stderr.into_owned(),
+        (true, false) => stdout.into_owned(),
+        (true, true) => String::new(),
+    };
+    normalize_machine_paths(combined.trim())
+}
+
+fn is_generic_summary(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized == "error during verification"
+        || normalized == "verification error"
+        || normalized == "verification failed"
+        || normalized == "unknown"
+}
+
+pub(super) fn first_actionable_error(diagnostic: &str) -> Option<String> {
+    let mut fallback = None;
+    for line in diagnostic.lines() {
+        let candidate = line
+            .trim()
+            .trim_start_matches("Error:")
+            .trim_start_matches("error:")
+            .trim();
+        if candidate.is_empty() || is_generic_summary(candidate) {
+            continue;
+        }
+        fallback.get_or_insert_with(|| candidate.to_string());
+        let lower = candidate.to_ascii_lowercase();
+        if [
+            "unsupported",
+            "unknown type",
+            "incompatible",
+            "mismatch",
+            "expected",
+            "counterexample",
+            "failed",
+            "error",
+            "panic",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            return Some(candidate.to_string());
+        }
+    }
+    fallback
+}
+
+fn normalize_machine_paths(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        return text.replace('\\', "/");
+    };
+    let cwd_native = cwd.to_string_lossy();
+    let cwd_slashes = cwd_native.replace('\\', "/");
+    text.replace(cwd_native.as_ref(), ".")
+        .replace(&cwd_slashes, ".")
+        .replace('\\', "/")
+}
+
+fn format_command(program: &str, argv: &[String]) -> String {
+    std::iter::once(program)
+        .chain(argv.iter().map(String::as_str))
+        .map(|arg| {
+            if arg.contains([' ', '\t', '"']) {
+                format!("\"{}\"", arg.replace('"', "\\\""))
+            } else {
+                arg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn find_generated_script(out_dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(out_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("saw") {
+            return Some(normalize_machine_paths(&path.to_string_lossy()));
+        }
+    }
+    None
+}
+
 pub(super) fn write_error_result(
     out_dir: &Path,
     function: &str,
@@ -77,6 +205,9 @@ pub(super) fn write_error_result(
         eprintln!("warning: cannot create {}: {e}", out_dir.display());
         return;
     }
+    let diagnostic = normalize_machine_paths(message);
+    let summary = first_actionable_error(&diagnostic)
+        .unwrap_or_else(|| "saw-spec-gen produced no usable result".to_string());
     let json = serde_json::json!({
         "schema_version": "1",
         "side": impl_lang,
@@ -85,11 +216,26 @@ pub(super) fn write_error_result(
         "status": "error",
         "verdict": "UNKNOWN",
         "kind": "pipeline_invocation_error",
-        "message": message,
+        "message": summary,
+        "log_excerpt": diagnostic,
     });
     let dest = out_dir.join("result.json");
     let text = serde_json::to_string_pretty(&json).unwrap_or_default() + "\n";
     if let Err(e) = std::fs::write(&dest, text) {
         eprintln!("warning: cannot write {}: {e}", dest.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actionable_error_skips_generic_wrapper() {
+        let diagnostic = "error during verification\nError: unsupported type: %reference\nUnknown type alias Ident \\\"reference\\\"";
+        assert_eq!(
+            first_actionable_error(diagnostic).as_deref(),
+            Some("unsupported type: %reference")
+        );
     }
 }

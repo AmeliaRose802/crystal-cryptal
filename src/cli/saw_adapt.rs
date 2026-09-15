@@ -268,7 +268,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
     let message = value
         .get("message")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
     let overrides: Vec<String> = value
         .get("overrides")
         .and_then(|v| v.as_array())
@@ -285,19 +285,28 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         .and_then(|v| v.as_u64());
     let counterexample = extract_counterexample(value);
     let log_excerpt: Option<String> = value
-        .get("log_excerpt")
+        .get("diagnostic")
+        .or_else(|| value.get("log_excerpt"))
         .or_else(|| value.get("log"))
         .or_else(|| value.get("stderr"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
     let verify_command: Option<String> = value
         .get("verify_command")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
     let verify_script: Option<String> = value
         .get("verify_script")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
+
+    let failure_reason = || {
+        message
+            .as_deref()
+            .filter(|message| !is_generic_failure(message))
+            .map(str::to_string)
+            .or_else(|| log_excerpt.as_deref().and_then(first_actionable_diagnostic))
+    };
 
     match raw_status {
         "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => ProofStatus::Proven {
@@ -310,7 +319,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         },
         "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
             ProofStatus::Failed {
-                reason: message.unwrap_or_else(|| "counterexample found".into()),
+                reason: failure_reason().unwrap_or_else(|| "counterexample found".into()),
                 counterexample,
                 log_excerpt,
                 verify_command,
@@ -318,14 +327,14 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             }
         }
         "timeout" => ProofStatus::Failed {
-            reason: message.unwrap_or_else(|| "timeout".into()),
+            reason: failure_reason().unwrap_or_else(|| "timeout".into()),
             counterexample,
             log_excerpt,
             verify_command,
             verify_script,
         },
         "error" | "UNKNOWN" => ProofStatus::Failed {
-            reason: message.unwrap_or_else(|| "error during verification".into()),
+            reason: failure_reason().unwrap_or_else(|| "error during verification".into()),
             counterexample,
             log_excerpt,
             verify_command,
@@ -333,6 +342,56 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         },
         _ => ProofStatus::NotAttempted,
     }
+}
+
+fn is_generic_failure(message: &str) -> bool {
+    matches!(
+        message.trim().to_ascii_lowercase().as_str(),
+        "" | "error during verification" | "verification error" | "verification failed" | "unknown"
+    )
+}
+
+fn first_actionable_diagnostic(diagnostic: &str) -> Option<String> {
+    let mut fallback = None;
+    for line in diagnostic.lines() {
+        let candidate = line
+            .trim()
+            .trim_start_matches("Error:")
+            .trim_start_matches("error:")
+            .trim();
+        if candidate.is_empty() || is_generic_failure(candidate) {
+            continue;
+        }
+        fallback.get_or_insert_with(|| candidate.to_string());
+        let lower = candidate.to_ascii_lowercase();
+        if [
+            "unsupported",
+            "unknown type",
+            "incompatible",
+            "mismatch",
+            "expected",
+            "failed",
+            "error",
+            "panic",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            return Some(candidate.to_string());
+        }
+    }
+    fallback
+}
+
+fn normalize_machine_paths(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        return text.replace('\\', "/");
+    };
+    let cwd_native = cwd.to_string_lossy();
+    let cwd_slashes = cwd_native.replace('\\', "/");
+    text.replace(cwd_native.as_ref(), ".")
+        .replace(&cwd_slashes, ".")
+        .replace('\\', "/")
 }
 
 /// Extract a counterexample as a human-readable string. Prefers `counterexample_text`

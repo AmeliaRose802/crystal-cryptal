@@ -336,16 +336,28 @@ fn render_matrix_emits_all_sections() {
     ];
     let modules = vec![("SDEP".to_string(), "".to_string(), items.as_slice())];
     let inv = ImplementationInventory {
-        functions: vec![InventoryEntry {
-            name: "sha256".into(),
-            lang: "cpp".into(),
-            symbol: None,
-            file: Some("cpp/src/sha256.cpp".into()),
-            models: Some("hmacSha256".into()),
-            models_note: None,
-            composes: vec![],
-            reason_codes: vec!["R2".into()],
-        }],
+        functions: vec![
+            InventoryEntry {
+                name: "sha256".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/sha256.cpp".into()),
+                models: Some("hmacSha256".into()),
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec!["R2".into()],
+            },
+            InventoryEntry {
+                name: "unverifiedReal".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/unverified.cpp".into()),
+                models: None,
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec!["R1".into()],
+            },
+        ],
     };
     let cfg = CoverageConfig {
         exclude: vec![],
@@ -363,12 +375,12 @@ fn render_matrix_emits_all_sections() {
     assert!(md.contains("✅ Proven"));
     assert!(md.contains("🔲 Proven (bounded)"));
     assert!(md.contains("🧩 ABI adapter / stand-in"));
-    assert!(md.contains("⚠️ Implemented, unverified"));
+    assert!(md.contains("⚠️ Implemented, unverified"), "matrix: {md}");
     assert!(md.contains("📄 Spec-only"));
     assert!(md.contains("sha256"));
     assert!(md.contains("Placeholder."));
     assert!(md.contains("Reason codes"));
-    assert!(md.contains("([source](cpp/src/sha256.cpp))"));
+    assert!(md.contains("([source](cpp/src/unverified.cpp))"));
     assert!(md.contains("Verified return value and post-state"));
     assert!(!md.contains("`z3`"));
 }

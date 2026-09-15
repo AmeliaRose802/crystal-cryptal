@@ -1,15 +1,78 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 255
+assertion_line: 256
 expression: content
 ---
 # SDEP
 
-## Coverage at a glance
+## Coverage summary
 
-✅ 0 proven · 🔲 0 bounded · 🔒 2 trusted assumptions · 🧩 1 adapters/stand-ins · ⚠️ 6 **unverified** · 📄 14 spec-only
+| Badge | Meaning | Count |
+|-------|---------|-------|
+| ✅ | Proven | 0 |
+| 🔲 | Proven (bounded) | 0 |
+| 🔒 | Trusted assumption | 2 |
+| 🧩 | ABI adapter / stand-in | 1 |
+| ⚠️ | Implemented, unverified | 4 |
+| 📄 | Spec-only | 14 |
+| | **Total** | **21** |
 
-See the full breakdown — including every real function the codebase contains, whether or not it was modeled — on the [Coverage Matrix](coverage.md). Pages here that carry a 🧩, 🔲, or ⚠️ badge surface the caveat in a banner at the top.
+> ⚠️ **4 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
+
+## ⚠️ Implemented, unverified
+
+Real production functions with no proof. This is the gap.
+
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| `canonicalizePayload` | impl (cpp) ([source](cpp/src/canonical.cpp)) | `canonicalize_lp` *(bounded model only)* | `R1 unbounded`, `R2 stl-heap` | — |
+| `handle_provision` | impl (cpp) ([source](cpp/src/controller.cpp)) | composes `provisionKey` | `R6 compositional` | — |
+| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/decisions.cpp)) | — | `R6 compositional` | — |
+| `sha256` | impl (cpp) ([source](cpp/src/sha256.cpp)) | — | `R1 unbounded` | — |
+
+## 🔒 Trusted assumptions
+
+Assumed contracts for real external dependencies. These are explicit trust boundaries, not machine-checked equivalence proofs.
+
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`hmacSha256`](functions/hmacSha256.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/hmac.cpp)) | `hmacSha256`; stands in for `hmac_sha256` | `R2 stl-heap` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
+
+## 🧩 ABI adapter / stand-in
+
+Cryptol definitions with no real-code counterpart (placeholders, uninterpreted functions, ABI adapters). The notes column explains what each one stands in for.
+
+| Function | Source | Maps to | Reason codes | Notes |
+|----------|--------|---------|--------------|-------|
+| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/canonical.cpp)) | `canonLenPrefixed` *(bounded model only)*; stands in for `canonicalize_lp` | `R1 unbounded` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+
+## 📄 Spec-only
+
+Lives in the model on purpose (gap-exhibiting reference functions, etc.) — no implementation expected.
+
+| Function | Source | Maps to | Notes |
+|----------|--------|---------|-------|
+| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — |
+| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — |
+| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — |
+| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — |
+| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — |
+| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — |
+| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — |
+| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — |
+| [`lpField`](functions/lpField.md) | model (SDEP) | — | — |
+| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — |
+| [`none`](functions/none.md) | model (SDEP) | — | — |
+| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — |
+| [`some`](functions/some.md) | model (SDEP) | — | — |
+| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — |
+
+## Excluded helpers
+
+2 functions excluded from the matrix via `coverage.toml [exclude].functions` (not security-relevant): `to_lower`, `trim`.
+
+Dedicated permalink: [Coverage Matrix](coverage.md).
 
 ## How verification works here
 

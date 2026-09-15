@@ -339,6 +339,50 @@ fn disproved_result_is_preserved_as_a_proof_outcome() {
     assert_eq!(status["reason"], "counterexample found");
 }
 
+#[test]
+fn verifier_error_preserves_actionable_summary_and_complete_diagnostics() {
+    let project = TestProject::new("actionable-diagnostic");
+    let output = project
+        .command()
+        .arg("--best-effort")
+        .env("MOCK_SAW_SPEC_GEN_VERIFY_ERROR", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let result_path = project
+        .verify_output
+        .join("out_pipelineIdentity/result.json");
+    let result: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(result_path).unwrap()).unwrap();
+    assert_eq!(result["message"], "unsupported type: %reference");
+    let diagnostic = result["log_excerpt"].as_str().unwrap();
+    assert!(diagnostic.contains("Unknown type alias Ident"));
+    assert!(diagnostic.contains("impl-b/nested/b_match.cpp:42:7"));
+    assert!(
+        !diagnostic.contains(&project.root.to_string_lossy().replace('\\', "/")),
+        "absolute project path leaked: {diagnostic}"
+    );
+    assert!(
+        result["verify_script"]
+            .as_str()
+            .unwrap()
+            .ends_with("generated-verify.saw")
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&project.manifest).unwrap()).unwrap();
+    let status = &manifest["functions"]["pipelineIdentity"]["overall"];
+    assert_eq!(status["reason"], "unsupported type: %reference");
+    assert!(
+        status["log_excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown type alias")
+    );
+    assert!(status["verify_script"].as_str().is_some());
+}
+
 fn write_result(path: &Path, cryptol_fn: &str, verdict: &str, impl_file: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let result = serde_json::json!({
