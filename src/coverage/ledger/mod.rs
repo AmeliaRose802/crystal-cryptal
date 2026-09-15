@@ -39,6 +39,10 @@ pub enum LedgerSource {
 #[derive(Debug, Clone)]
 pub struct LedgerEntry {
     pub name: String,
+    /// Real implementation identifier when this model row is joined through
+    /// an inventory `models` mapping. This remains distinct from `name`, which
+    /// is the Cryptol definition used for proof-status lookup and page links.
+    pub impl_name: Option<String>,
     pub source: LedgerSource,
     pub badge: CoverageBadge,
 
@@ -66,6 +70,10 @@ pub struct LedgerEntry {
 #[derive(Debug, Default, Clone)]
 pub struct Ledger {
     pub entries: Vec<LedgerEntry>,
+    /// Absolute `<repository>/blob/<revision>/` prefix for implementation
+    /// links. When unavailable, source paths render as text instead of broken
+    /// links relative to generated documentation.
+    pub source_url_base: Option<String>,
     /// Functions suppressed by `coverage.toml [exclude].functions`. Surfaced
     /// as a footnote on the matrix so the suppression is documented rather
     /// than silent.
@@ -196,6 +204,7 @@ pub fn build_ledger(
         });
         entries.push(LedgerEntry {
             name: name.clone(),
+            impl_name: inv.map(|entry| entry.name.clone()),
             source,
             badge,
             module: Some(mf.module.clone()),
@@ -237,6 +246,7 @@ pub fn build_ledger(
         let reason_codes = collect_reason_codes(name, Some(entry), config, true);
         entries.push(LedgerEntry {
             name: name.clone(),
+            impl_name: Some(name.clone()),
             source: LedgerSource::ImplementationOnly,
             badge,
             module: None,
@@ -265,7 +275,11 @@ pub fn build_ledger(
     excluded.sort();
     excluded.dedup();
 
-    Ledger { entries, excluded }
+    Ledger {
+        entries,
+        source_url_base: None,
+        excluded,
+    }
 }
 
 struct ModelFn {

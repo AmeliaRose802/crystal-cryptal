@@ -87,15 +87,14 @@ fn main() {
     {
         fs::write(output.join("generated-verify.saw"), "// generated proof\n").unwrap();
         let result = format!(
-            "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  \"status\": \"error\",\n  \"message\": \"error during verification\",\n  \"impl_file\": \"{}\"\n}}\n",
+            "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  \"status\": \"error\",\n  \"message\": \"Loading file verify.saw\",\n  \"impl_file\": \"{}\"\n}}\n",
             escape_json(&function),
             escape_json(&cryptol_fn),
             escape_json(&cpp_file.to_string_lossy()),
         );
         fs::write(output.join("result.json"), result).unwrap();
-        eprintln!("error during verification");
-        eprintln!("Error: unsupported type: %reference");
-        eprintln!("Unknown type alias Ident \\\"reference\\\" at {}:42:7", cpp_file.display());
+        eprintln!("Cryptol: [error] at verify.saw:8:1");
+        eprintln!("Could not find definition for Unknown type alias Ident \"reference\"");
         std::process::exit(1);
     }
 

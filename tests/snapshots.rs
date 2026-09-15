@@ -183,11 +183,12 @@ fn load_sdep_with_coverage() -> (Vec<Item>, SymbolTable, RenderOptions) {
     let symbols = SymbolTable::build(&items);
     let inv = load_inventory(Path::new("tests/fixtures/implementation_inventory.json")).unwrap();
     let cfg = load_coverage_config(Path::new("tests/fixtures/coverage.toml")).unwrap();
-    let ledger = build_ledger(
+    let mut ledger = build_ledger(
         &[("SDEP".to_string(), "".to_string(), items.as_slice())],
         &inv,
         &cfg,
     );
+    ledger.source_url_base = Some("https://github.com/example/protocol/blob/verification/".into());
     let opts = RenderOptions {
         ledger: Some(ledger),
         ..RenderOptions::default()
@@ -352,11 +353,12 @@ private
         exclude: vec!["excludedHelper".into()],
         ..CoverageConfig::default()
     };
-    let ledger = build_ledger(
+    let mut ledger = build_ledger(
         &[("CoverageAcceptance".into(), "".into(), items.as_slice())],
         &inventory,
         &config,
     );
+    ledger.source_url_base = Some("https://github.com/example/protocol/blob/verification/".into());
     assert!(
         ledger.lookup("provenImpl").is_none(),
         "implementation row was duplicated"
@@ -372,9 +374,34 @@ private
     assert!(shared.find("⚠️ Implemented, unverified").unwrap() < shared.find("✅ Proven").unwrap());
     assert!(shared.find("✅ Proven").unwrap() < shared.find("🔒 Trusted assumptions").unwrap());
     assert!(shared.contains("failed: unsupported type: %reference"));
-    assert!(shared.contains("<summary>Complete verifier diagnostics</summary>"));
-    assert!(shared.contains("[generated SAW script](verify_out/out_unverified/generated.saw)"));
-    assert!(shared.contains("[source](cpp/src/unverified.cpp)"));
+    assert!(shared.contains("Complete verifier diagnostics — <code>unverifiedImpl</code>"));
+    assert!(shared.contains(
+        "[source](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
+    ));
+    assert!(shared.contains(
+        "[`unverifiedImpl`](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
+    ));
+    assert!(shared.contains(
+        "implementation `unverifiedImpl` ↔ model [`unverifiedModel`](functions/unverifiedModel.md)"
+    ));
+    assert!(shared.contains(
+        "Generated SAW script: <code>generated.saw</code> (local verifier artifact; not published with this site)."
+    ));
+    assert!(!shared.contains("[generated SAW script]"));
+    for line in shared.lines().filter(|line| line.starts_with('|')) {
+        assert!(
+            !line.contains("<details") && !line.contains("<pre>"),
+            "DocFX-unsafe content leaked into table row: {line}"
+        );
+    }
+    let unverified_section = shared.split("## ✅ Proven").next().unwrap();
+    let table_end = unverified_section.find("\n\n<details>").unwrap();
+    assert!(
+        unverified_section[..table_end]
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .all(|line| !line.contains("Complete verifier diagnostics"))
+    );
     let tables = shared.split("## Excluded helpers").next().unwrap();
     assert!(!tables.contains("excludedHelper"));
     assert!(!tables.contains("internalPost"));
@@ -382,16 +409,79 @@ private
     let symbols = SymbolTable::build(&items);
     let options = RenderOptions {
         ledger: Some(ledger),
+        docfx: true,
         ..RenderOptions::default()
     };
     let dir = render_to("coverage-acceptance");
     render_multi_file(&items, &symbols, &dir, &options).unwrap();
+    fs::write(dir.join("coverage.md"), &matrix).unwrap();
     let home = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(home.contains(&shared), "home and coverage content diverged");
     let functions_section = home.split("## Functions").nth(1).unwrap();
     assert!(!functions_section.contains("excludedHelper"));
     assert!(!functions_section.contains("internalPost"));
+    assert_docfx_coverage_table(&dir);
     let _ = fs::remove_dir_all(dir);
+}
+
+fn assert_docfx_coverage_table(dir: &Path) {
+    if std::process::Command::new("docfx")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+    fs::write(
+        dir.join("docfx.json"),
+        r#"{
+  "build": {
+    "content": [{ "files": ["**/*.md"] }],
+    "dest": "_site",
+    "globalMetadata": { "_disableContribution": true }
+  }
+}"#,
+    )
+    .unwrap();
+    let output = std::process::Command::new("docfx")
+        .arg("docfx.json")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "DocFX failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let build_log = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for warning in build_log
+        .lines()
+        .filter(|line| line.contains("InvalidFileLink"))
+    {
+        assert!(
+            !warning.contains("cpp/src/")
+                && !warning.contains("generated.saw")
+                && !warning.contains("verify_out"),
+            "coverage emitted a broken DocFX link: {warning}"
+        );
+    }
+    for page in ["index.html", "coverage.html"] {
+        let html = fs::read_to_string(dir.join("_site").join(page)).unwrap();
+        assert!(
+            html.contains("<table"),
+            "coverage table missing from {page} DOM"
+        );
+        assert!(
+            !html.contains("| Function | Source | Maps to | Notes |")
+                && !html.contains("| Function | Source | Maps to | Reason codes | Notes |"),
+            "coverage table rendered as literal Markdown in {page}"
+        );
+        assert!(html.contains("Complete verifier diagnostics"));
+    }
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

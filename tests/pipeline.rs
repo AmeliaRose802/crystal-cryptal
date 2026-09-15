@@ -355,10 +355,13 @@ fn verifier_error_preserves_actionable_summary_and_complete_diagnostics() {
         .join("out_pipelineIdentity/result.json");
     let result: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(result_path).unwrap()).unwrap();
-    assert_eq!(result["message"], "unsupported type: %reference");
+    assert_eq!(
+        result["message"],
+        "Could not find definition for Unknown type alias Ident \"reference\""
+    );
     let diagnostic = result["log_excerpt"].as_str().unwrap();
     assert!(diagnostic.contains("Unknown type alias Ident"));
-    assert!(diagnostic.contains("impl-b/nested/b_match.cpp:42:7"));
+    assert!(diagnostic.contains("Cryptol: [error] at verify.saw:8:1"));
     assert!(
         !diagnostic.contains(&project.root.to_string_lossy().replace('\\', "/")),
         "absolute project path leaked: {diagnostic}"
@@ -373,7 +376,10 @@ fn verifier_error_preserves_actionable_summary_and_complete_diagnostics() {
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&project.manifest).unwrap()).unwrap();
     let status = &manifest["functions"]["pipelineIdentity"]["overall"];
-    assert_eq!(status["reason"], "unsupported type: %reference");
+    assert_eq!(
+        status["reason"],
+        "Could not find definition for Unknown type alias Ident \"reference\""
+    );
     assert!(
         status["log_excerpt"]
             .as_str()

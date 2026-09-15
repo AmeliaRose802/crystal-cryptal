@@ -26,10 +26,10 @@ Real production functions with no proof. This is the gap.
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| `canonicalizePayload` | impl (cpp) ([source](cpp/src/canonical.cpp)) | `canonicalize_lp` *(bounded model only)* | `R1 unbounded`, `R2 stl-heap` | — |
-| `handle_provision` | impl (cpp) ([source](cpp/src/controller.cpp)) | composes `provisionKey` | `R6 compositional` | — |
-| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/decisions.cpp)) | — | `R6 compositional` | — |
-| `sha256` | impl (cpp) ([source](cpp/src/sha256.cpp)) | — | `R1 unbounded` | — |
+| [`canonicalizePayload`](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp)) | `canonicalize_lp` | `R1 unbounded`, `R2 stl-heap` | — |
+| [`handle_provision`](https://github.com/example/protocol/blob/verification/cpp/src/controller.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/controller.cpp)) | composes `provisionKey` | `R6 compositional` | — |
+| [`provisionKey`](https://github.com/example/protocol/blob/verification/cpp/src/decisions.cpp) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/decisions.cpp)) | implementation `provisionKey` ↔ model [`provisionKey`](functions/provisionKey.md) | `R6 compositional` | — |
+| [`sha256`](https://github.com/example/protocol/blob/verification/cpp/src/sha256.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/sha256.cpp)) | — | `R1 unbounded` | — |
 
 ## 🔒 Trusted assumptions
 
@@ -37,8 +37,8 @@ Assumed contracts for real external dependencies. These are explicit trust bound
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| [`hmacSha256`](functions/hmacSha256.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/hmac.cpp)) | `hmacSha256`; stands in for `hmac_sha256` | `R2 stl-heap` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
-| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
+| [`hmac_sha256`](https://github.com/example/protocol/blob/verification/cpp/src/hmac.cpp) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/hmac.cpp)) | implementation `hmac_sha256` ↔ model [`hmacSha256`](functions/hmacSha256.md) | `R2 stl-heap` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | external contract ↔ model [`isValidSignature`](functions/isValidSignature.md) | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
 
 ## 🧩 ABI adapter / stand-in
 
@@ -46,7 +46,7 @@ Cryptol definitions with no real-code counterpart (placeholders, uninterpreted f
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model + impl (SDEP ↔ cpp) ([source](cpp/src/canonical.cpp)) | `canonLenPrefixed` *(bounded model only)*; stands in for `canonicalize_lp` | `R1 unbounded` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+| [`canonicalize_lp`](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp)) | implementation `canonicalize_lp` ↔ model [`canonLenPrefixed`](functions/canonLenPrefixed.md) *(bounded model only)* | `R1 unbounded` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
 
 ## 📄 Spec-only
 

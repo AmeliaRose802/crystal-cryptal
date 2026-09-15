@@ -380,7 +380,7 @@ fn render_matrix_emits_all_sections() {
     assert!(md.contains("sha256"));
     assert!(md.contains("Placeholder."));
     assert!(md.contains("Reason codes"));
-    assert!(md.contains("([source](cpp/src/unverified.cpp))"));
+    assert!(md.contains("impl (cpp) (`cpp/src/unverified.cpp`)"));
     assert!(md.contains("Verified return value and post-state"));
     assert!(!md.contains("`z3`"));
 }

@@ -1,10 +1,14 @@
 // SAW log / result-json adapters: read upstream verifier output and emit a
 // unified `proof_manifest.json` consumed by the renderer.
 
+mod diagnostic;
+
 use std::path::{Path, PathBuf};
 
 use pretty_specs::ir::ProofStatus;
 use pretty_specs::saw_log::parse_saw_log;
+
+use diagnostic::{best_failure_reason, normalize_machine_paths};
 
 pub(crate) fn run_saw_log_adapter(log_path: &Path, output: &Path) {
     let text = std::fs::read_to_string(log_path).unwrap_or_else(|e| {
@@ -300,13 +304,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         .and_then(|v| v.as_str())
         .map(normalize_machine_paths);
 
-    let failure_reason = || {
-        message
-            .as_deref()
-            .filter(|message| !is_generic_failure(message))
-            .map(str::to_string)
-            .or_else(|| log_excerpt.as_deref().and_then(first_actionable_diagnostic))
-    };
+    let failure_reason = || best_failure_reason(message.as_deref(), log_excerpt.as_deref());
 
     match raw_status {
         "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => ProofStatus::Proven {
@@ -342,56 +340,6 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         },
         _ => ProofStatus::NotAttempted,
     }
-}
-
-fn is_generic_failure(message: &str) -> bool {
-    matches!(
-        message.trim().to_ascii_lowercase().as_str(),
-        "" | "error during verification" | "verification error" | "verification failed" | "unknown"
-    )
-}
-
-fn first_actionable_diagnostic(diagnostic: &str) -> Option<String> {
-    let mut fallback = None;
-    for line in diagnostic.lines() {
-        let candidate = line
-            .trim()
-            .trim_start_matches("Error:")
-            .trim_start_matches("error:")
-            .trim();
-        if candidate.is_empty() || is_generic_failure(candidate) {
-            continue;
-        }
-        fallback.get_or_insert_with(|| candidate.to_string());
-        let lower = candidate.to_ascii_lowercase();
-        if [
-            "unsupported",
-            "unknown type",
-            "incompatible",
-            "mismatch",
-            "expected",
-            "failed",
-            "error",
-            "panic",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle))
-        {
-            return Some(candidate.to_string());
-        }
-    }
-    fallback
-}
-
-fn normalize_machine_paths(text: &str) -> String {
-    let Ok(cwd) = std::env::current_dir() else {
-        return text.replace('\\', "/");
-    };
-    let cwd_native = cwd.to_string_lossy();
-    let cwd_slashes = cwd_native.replace('\\', "/");
-    text.replace(cwd_native.as_ref(), ".")
-        .replace(&cwd_slashes, ".")
-        .replace('\\', "/")
 }
 
 /// Extract a counterexample as a human-readable string. Prefers `counterexample_text`

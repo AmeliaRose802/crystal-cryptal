@@ -123,10 +123,10 @@ fn render_badge_section(out: &mut String, ledger: &Ledger, badge: CoverageBadge)
         let _ = writeln!(out, "| Function | Source | Maps to | Notes |");
         let _ = writeln!(out, "|----------|--------|---------|-------|");
     }
-    for entry in rows {
-        let function = function_link(entry);
-        let source = source_cell(entry);
-        let maps = maps_cell(ledger, entry);
+    for entry in &rows {
+        let function = function_link(ledger, entry);
+        let source = source_cell(ledger, entry);
+        let maps = maps_cell(entry);
         let notes = notes_cell(entry);
         if has_reason_codes {
             let reasons = reason_codes_cell(entry);
@@ -139,6 +139,7 @@ fn render_badge_section(out: &mut String, ledger: &Ledger, badge: CoverageBadge)
         }
     }
     out.push('\n');
+    render_diagnostics(out, &rows);
 }
 
 fn section_lede(badge: CoverageBadge) -> &'static str {
@@ -160,7 +161,13 @@ fn section_lede(badge: CoverageBadge) -> &'static str {
     }
 }
 
-fn function_link(entry: &LedgerEntry) -> String {
+fn function_link(ledger: &Ledger, entry: &LedgerEntry) -> String {
+    if let Some(impl_name) = &entry.impl_name {
+        return entry.impl_file.as_ref().map_or_else(
+            || format!("`{impl_name}`"),
+            |file| source_link(ledger, impl_name, file),
+        );
+    }
     match (&entry.module_prefix, &entry.module) {
         (Some(prefix), Some(_)) if !prefix.is_empty() => format!(
             "[`{name}`]({prefix}/functions/{name}.md)",
@@ -171,7 +178,7 @@ fn function_link(entry: &LedgerEntry) -> String {
     }
 }
 
-fn source_cell(entry: &LedgerEntry) -> String {
+fn source_cell(ledger: &Ledger, entry: &LedgerEntry) -> String {
     let kind = match entry.source {
         LedgerSource::ModelOnly => "model",
         LedgerSource::ImplementationOnly => "impl",
@@ -184,27 +191,35 @@ fn source_cell(entry: &LedgerEntry) -> String {
         (None, None) => kind.to_string(),
     };
     entry.impl_file.as_ref().map_or(source.clone(), |file| {
-        format!(
-            "{source} ([source]({}))",
-            markdown_target(&source_path(file))
+        let path = source_path(file);
+        source_url(ledger, &path).map_or_else(
+            || format!("{source} (`{path}`)"),
+            |url| format!("{source} ([source]({url}))"),
         )
     })
 }
 
-fn maps_cell(ledger: &Ledger, entry: &LedgerEntry) -> String {
+fn maps_cell(entry: &LedgerEntry) -> String {
     let mut parts = Vec::new();
-    if let Some(model) = &entry.models {
+    if entry.module.is_some() && entry.impl_name.is_some() {
+        let model = entry.models.as_deref().unwrap_or(&entry.name);
         let note = entry
             .models_note
             .as_deref()
             .map(|n| format!(" *({n})*"))
             .unwrap_or_default();
-        let target = ledger
-            .lookup(model)
-            .filter(|target| target.name != entry.name)
-            .map(function_link)
-            .unwrap_or_else(|| format!("`{model}`"));
-        parts.push(format!("{target}{note}"));
+        parts.push(format!(
+            "implementation `{}` ↔ model {}{note}",
+            entry.impl_name.as_deref().unwrap_or(&entry.name),
+            model_link(entry, model)
+        ));
+    } else if let Some(model) = &entry.models {
+        parts.push(model_link(entry, model));
+    } else if entry.badge == CoverageBadge::TrustedAssumption {
+        parts.push(format!(
+            "external contract ↔ model {}",
+            model_link(entry, &entry.name)
+        ));
     }
     if !entry.composes.is_empty() {
         parts.push(format!(
@@ -218,15 +233,15 @@ fn maps_cell(ledger: &Ledger, entry: &LedgerEntry) -> String {
         ));
     }
     if !entry.stands_in_for.is_empty() {
-        parts.push(format!(
-            "stands in for {}",
-            entry
-                .stands_in_for
-                .iter()
-                .map(|c| format!("`{c}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        let stand_ins = entry
+            .stands_in_for
+            .iter()
+            .filter(|name| Some(name.as_str()) != entry.impl_name.as_deref())
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>();
+        if !stand_ins.is_empty() {
+            parts.push(format!("stands in for {}", stand_ins.join(", ")));
+        }
     }
     if parts.is_empty() {
         "—".to_string()
@@ -282,25 +297,8 @@ fn notes_cell(entry: &LedgerEntry) -> String {
                 }
             }
             ProofStatus::Assumed => parts.push("assumed".into()),
-            ProofStatus::Failed {
-                reason,
-                log_excerpt,
-                verify_script,
-                ..
-            } => {
+            ProofStatus::Failed { reason, .. } => {
                 parts.push(format!("failed: {}", escape_cell(reason)));
-                if let Some(script) = verify_script {
-                    parts.push(format!(
-                        "[generated SAW script]({})",
-                        markdown_target(&source_path(script))
-                    ));
-                }
-                if let Some(diagnostic) = log_excerpt {
-                    parts.push(format!(
-                        "<details><summary>Complete verifier diagnostics</summary><pre>{}</pre></details>",
-                        escape_html(diagnostic)
-                    ));
-                }
             }
             ProofStatus::NotAttempted => parts.push("not attempted".into()),
         }
@@ -312,8 +310,66 @@ fn notes_cell(entry: &LedgerEntry) -> String {
     }
 }
 
-fn markdown_target(path: &str) -> String {
-    path.replace(' ', "%20")
+fn render_diagnostics(out: &mut String, rows: &[&LedgerEntry]) {
+    for entry in rows {
+        let Some(ProofStatus::Failed {
+            log_excerpt: Some(diagnostic),
+            verify_script,
+            ..
+        }) = &entry.proof
+        else {
+            continue;
+        };
+        let display = entry.impl_name.as_deref().unwrap_or(&entry.name);
+        let _ = writeln!(
+            out,
+            "<details><summary>Complete verifier diagnostics — <code>{}</code></summary>\n\n<pre>{}</pre>",
+            escape_html(display),
+            escape_html(diagnostic)
+        );
+        if let Some(script) = verify_script {
+            let file = std::path::Path::new(script)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let _ = writeln!(
+                out,
+                "\nGenerated SAW script: <code>{}</code> (local verifier artifact; not published with this site).",
+                escape_html(&file)
+            );
+        }
+        let _ = writeln!(out, "\n</details>\n");
+    }
+}
+
+fn model_link(entry: &LedgerEntry, model: &str) -> String {
+    match (&entry.module_prefix, &entry.module) {
+        (Some(prefix), Some(_)) if !prefix.is_empty() => {
+            format!("[`{model}`]({prefix}/functions/{model}.md)")
+        }
+        (Some(_), Some(_)) => format!("[`{model}`](functions/{model}.md)"),
+        _ => format!("`{model}`"),
+    }
+}
+
+fn source_link(ledger: &Ledger, label: &str, file: &str) -> String {
+    let path = source_path(file);
+    source_url(ledger, &path)
+        .map(|url| format!("[`{label}`]({url})"))
+        .unwrap_or_else(|| format!("`{label}`"))
+}
+
+fn source_url(ledger: &Ledger, path: &str) -> Option<String> {
+    ledger.source_url_base.as_ref().map(|base| {
+        format!(
+            "{}{}",
+            base,
+            path.split('/')
+                .map(|part| part.replace(' ', "%20"))
+                .collect::<Vec<_>>()
+                .join("/")
+        )
+    })
 }
 
 fn escape_html(value: &str) -> String {

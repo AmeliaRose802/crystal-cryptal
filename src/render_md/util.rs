@@ -320,10 +320,11 @@ where
 
 /// Strip "Category X: " or trailing dashes from a section title.
 pub(super) fn strip_category_prefix(title: &str) -> String {
-    let payload = if let Some(pos) = title.find(':') {
-        title[pos + 1..].trim()
-    } else {
-        title.trim()
+    let payload = match title.find(':') {
+        Some(pos) if pos > 0 && !title[..pos].ends_with(char::is_whitespace) => {
+            title[pos + 1..].trim()
+        }
+        _ => title.trim(),
     };
     payload.trim_end_matches('-').trim().to_string()
 }
@@ -362,5 +363,20 @@ mod tests {
         assert!(cleaned.contains("Bounded check"));
         assert!(cleaned.contains("Field length in bytes"));
         assert!(!cleaned.to_lowercase().contains("scope of this proof"));
+    }
+
+    #[test]
+    fn category_prefix_ignores_cryptol_commands_inside_titles() {
+        let title = "Cryptol properties (provable by :prove)";
+        assert_eq!(strip_category_prefix(title), title);
+        assert_ne!(category_slug_from_title(title), "prove)");
+        assert_eq!(
+            strip_category_prefix("Access Control: enforceAccess"),
+            "enforceAccess"
+        );
+        assert_eq!(
+            strip_category_prefix("Category: Access Control"),
+            "Access Control"
+        );
     }
 }

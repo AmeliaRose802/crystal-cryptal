@@ -83,8 +83,9 @@ pub(super) fn enrich_result(out_dir: &Path, output: &Output, program: &str, argv
             .get("message")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
-        if is_generic_summary(current)
-            && let Some(summary) = first_actionable_error(&diagnostic)
+        if let Some(summary) = first_actionable_error(&diagnostic)
+            && (is_generic_summary(current)
+                || diagnostic_score(&summary) > diagnostic_score(current))
         {
             object.insert("message".into(), serde_json::json!(summary));
         }
@@ -123,10 +124,11 @@ fn is_generic_summary(message: &str) -> bool {
         || normalized == "verification error"
         || normalized == "verification failed"
         || normalized == "unknown"
+        || diagnostic_score(message) == 0
 }
 
 pub(super) fn first_actionable_error(diagnostic: &str) -> Option<String> {
-    let mut fallback = None;
+    let mut best: Option<(u8, String)> = None;
     for line in diagnostic.lines() {
         let candidate = line
             .trim()
@@ -136,26 +138,48 @@ pub(super) fn first_actionable_error(diagnostic: &str) -> Option<String> {
         if candidate.is_empty() || is_generic_summary(candidate) {
             continue;
         }
-        fallback.get_or_insert_with(|| candidate.to_string());
-        let lower = candidate.to_ascii_lowercase();
-        if [
-            "unsupported",
-            "unknown type",
-            "incompatible",
-            "mismatch",
-            "expected",
-            "counterexample",
-            "failed",
-            "error",
-            "panic",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle))
+        let score = diagnostic_score(candidate);
+        if score > 0
+            && best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score > *best_score)
         {
-            return Some(candidate.to_string());
+            best = Some((score, candidate.to_string()));
         }
     }
-    fallback
+    best.map(|(_, message)| message)
+}
+
+fn diagnostic_score(candidate: &str) -> u8 {
+    let lower = candidate.to_ascii_lowercase();
+    if lower.starts_with("loading file")
+        || lower.starts_with("cryptol: [error] at")
+        || lower.starts_with("saw: [error] at")
+        || lower.starts_with("at ")
+        || lower == "stack trace:"
+    {
+        return 0;
+    }
+    if [
+        "could not find definition",
+        "type mismatch",
+        "unsupported type",
+        "unknown type alias",
+        "incompatible types",
+        "width mismatch",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return 4;
+    }
+    if ["expected", "counterexample", "failed", "error", "panic"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return 3;
+    }
+    1
 }
 
 fn normalize_machine_paths(text: &str) -> String {
@@ -236,6 +260,22 @@ mod tests {
         assert_eq!(
             first_actionable_error(diagnostic).as_deref(),
             Some("unsupported type: %reference")
+        );
+    }
+
+    #[test]
+    fn actionable_error_skips_loading_and_location_headers() {
+        let diagnostic = "Loading file \"verify.saw\"\nCryptol: [error] at verify.saw:8:1\nCould not find definition of UnknownAlias";
+        assert_eq!(
+            first_actionable_error(diagnostic).as_deref(),
+            Some("Could not find definition of UnknownAlias")
+        );
+
+        let mismatch =
+            "Cryptol: [error] at verify.saw:12:4\nType mismatch: expected [256], found [16]";
+        assert_eq!(
+            first_actionable_error(mismatch).as_deref(),
+            Some("Type mismatch: expected [256], found [16]")
         );
     }
 }
