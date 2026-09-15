@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use pretty_specs::coverage::{
-    build_ledger, load_coverage_config, load_inventory, render_coverage_matrix,
+    CoverageConfig, ImplementationInventory, InventoryEntry, build_ledger, load_coverage_config,
+    load_inventory, render_coverage_content, render_coverage_matrix,
 };
-use pretty_specs::ir::{Item, load_proof_manifest};
+use pretty_specs::ir::{Item, ProofClause, ProofStatus, load_proof_manifest};
 use pretty_specs::linker::SymbolTable;
 use pretty_specs::parser::parse;
 use pretty_specs::render_md::{RenderOptions, render_multi_file, render_single_file};
@@ -182,11 +183,12 @@ fn load_sdep_with_coverage() -> (Vec<Item>, SymbolTable, RenderOptions) {
     let symbols = SymbolTable::build(&items);
     let inv = load_inventory(Path::new("tests/fixtures/implementation_inventory.json")).unwrap();
     let cfg = load_coverage_config(Path::new("tests/fixtures/coverage.toml")).unwrap();
-    let ledger = build_ledger(
+    let mut ledger = build_ledger(
         &[("SDEP".to_string(), "".to_string(), items.as_slice())],
         &inv,
         &cfg,
     );
+    ledger.source_url_base = Some("https://github.com/example/protocol/blob/verification/".into());
     let opts = RenderOptions {
         ledger: Some(ledger),
         ..RenderOptions::default()
@@ -245,8 +247,8 @@ fn snapshot_index_with_coverage_section() {
     render_multi_file(&items, &symbols, &dir, &opts).unwrap();
     let content = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(
-        content.contains("## Coverage at a glance"),
-        "coverage glance missing: {content}"
+        content.contains("## Coverage summary"),
+        "coverage summary missing: {content}"
     );
     assert!(
         content.contains("[Coverage Matrix](coverage.md)"),
@@ -269,6 +271,317 @@ fn coverage_md_is_written_to_output() {
     assert!(md.contains("⚠️"));
     assert!(md.contains("🧩"));
     assert!(md.contains("✅") || md.contains("🔲"));
+}
+
+#[test]
+fn home_embeds_the_filtered_coverage_report_with_unverified_first() {
+    let source = r#"
+module CoverageAcceptance where
+
+provenModel : Bit -> Bit
+provenModel x = x
+
+// C++ body:
+//   if (!ready) return false;
+unverifiedModel : Bit -> Bit
+unverifiedModel x = x
+
+// @coverage trusted: external primitive contract.
+trustedModel : Bit -> Bit
+trustedModel x = x
+
+excludedHelper : Bit -> Bit
+excludedHelper x = x
+
+private
+  // @coverage exclude
+  internalPost : Bit -> Bit
+  internalPost x = x
+"#;
+    let mut items = parse(source);
+    for item in &mut items {
+        if let Item::Function {
+            name, proof_status, ..
+        } = item
+        {
+            *proof_status = match name.as_str() {
+                "provenModel" => Some(ProofStatus::Proven {
+                    solver: "z3".into(),
+                    time_secs: Some(0.2),
+                    overrides: vec![],
+                    iterations: None,
+                    verify_command: Some("saw-spec-gen verify-cpp --cpp-file cpp/src/proven.cpp --cryptol-spec specs/CoverageAcceptance.cry --cryptol-fn provenModel --function provenImpl --output verify_out/out_provenModel --config=specs/CoverageAcceptance.toml".into()),
+                    verify_script: Some("verify_out/out_provenModel/verify.saw".into()),
+                    proof_script: Some(r#"// Step 1: Load bitcode
+m <- llvm_load_module "proven.bc";
+// Step 3: Equivalence spec
+let proven_spec = do {
+    this_ptr <- llvm_alloc_aligned 8 (llvm_array 152 (llvm_int 8));
+    this_pre <- llvm_fresh_var "this_pre" (llvm_array 152 (llvm_int 8));
+    // sret: aggregate return passed via hidden output pointer.
+    result_ptr <- llvm_alloc_aligned 8 (llvm_array 72 (llvm_int 8));
+    preBytes <- llvm_fresh_var "preBytes" (llvm_array 72 (llvm_int 8));
+    llvm_precond {{ (this_pre @ 128) <= 1 }};
+    llvm_execute_func [this_ptr, result_ptr];
+    llvm_points_to this_ptr (llvm_term {{ internalPost (this_pre @ 0) }});
+    llvm_points_to_at_type result_ptr (llvm_array 65 (llvm_int 8)) (llvm_term {{ provenModel (this_pre @ 0) }});
+};
+llvm_verify m "?provenImpl@@YA_N_N@Z" [] false proven_spec z3;
+"#.into()),
+                    clauses: vec![
+                        ProofClause {
+                            name: "return".into(),
+                            cryptol_fn: "provenModel".into(),
+                            assertion: "llvm_points_to_at_type".into(),
+                            region: None,
+                            projection: None,
+                        },
+                        ProofClause {
+                            name: "this".into(),
+                            cryptol_fn: "internalPost".into(),
+                            assertion: "llvm_points_to".into(),
+                            region: Some("this".into()),
+                            projection: None,
+                        },
+                    ],
+                }),
+                "unverifiedModel" => Some(ProofStatus::Failed {
+                    reason: "unsupported type: %reference".into(),
+                    counterexample: None,
+                    log_excerpt: Some(
+                        "Error: unsupported type: %reference\nUnknown type alias Ident \"reference\""
+                            .into(),
+                    ),
+                    verify_command: None,
+                    verify_script: Some("verify_out/out_unverified/generated.saw".into()),
+                    proof_script: None,
+                    clauses: vec![],
+                }),
+                _ => None,
+            };
+        }
+    }
+    let inventory = ImplementationInventory {
+        functions: vec![
+            InventoryEntry {
+                name: "provenImpl".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/proven.cpp".into()),
+                models: Some("provenModel".into()),
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec![],
+            },
+            InventoryEntry {
+                name: "unverifiedImpl".into(),
+                lang: "cpp".into(),
+                symbol: None,
+                file: Some("cpp/src/unverified.cpp".into()),
+                models: Some("unverifiedModel".into()),
+                models_note: None,
+                composes: vec![],
+                reason_codes: vec![],
+            },
+        ],
+    };
+    let config = CoverageConfig {
+        exclude: vec!["excludedHelper".into()],
+        ..CoverageConfig::default()
+    };
+    let mut ledger = build_ledger(
+        &[("CoverageAcceptance".into(), "".into(), items.as_slice())],
+        &inventory,
+        &config,
+    );
+    ledger.source_url_base = Some("https://github.com/example/protocol/blob/verification/".into());
+    assert!(
+        ledger.lookup("provenImpl").is_none(),
+        "implementation row was duplicated"
+    );
+    assert_eq!(
+        ledger.lookup("provenModel").unwrap().impl_file.as_deref(),
+        Some("cpp/src/proven.cpp")
+    );
+
+    let shared = render_coverage_content(&ledger);
+    let matrix = render_coverage_matrix(&ledger);
+    assert!(matrix.ends_with(&shared));
+    assert!(shared.find("⚠️ Implemented, unverified").unwrap() < shared.find("✅ Proven").unwrap());
+    assert!(shared.find("✅ Proven").unwrap() < shared.find("🔒 Trusted assumptions").unwrap());
+    assert!(shared.contains("failed: unsupported type: %reference"));
+    assert!(shared.contains("Complete verifier diagnostics — <code>unverifiedImpl</code>"));
+    assert!(shared.contains(
+        "<summary>Complete verifier diagnostics — <code>unverifiedImpl</code></summary>\n\n```text\nError: unsupported type: %reference\nUnknown type alias Ident \"reference\"\n```"
+    ));
+    assert!(shared.contains("aria-label=\"Copy verifier log\""));
+    assert!(shared.contains(
+        "[source](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)"
+    ));
+    assert!(shared.contains("[`unverifiedImpl`](functions/unverifiedModel.md)"));
+    assert!(shared.contains(
+        "implementation `unverifiedImpl` ↔ model [`unverifiedModel`](functions/unverifiedModel.md)"
+    ));
+    assert!(shared.contains(
+        "Generated SAW script: <code>generated.saw</code> (local verifier artifact; not published with this site)."
+    ));
+    assert!(!shared.contains("[generated SAW script]"));
+    for line in shared.lines().filter(|line| line.starts_with('|')) {
+        assert!(
+            !line.contains("<details") && !line.contains("<pre>"),
+            "DocFX-unsafe content leaked into table row: {line}"
+        );
+    }
+    let unverified_section = shared.split("## ✅ Proven").next().unwrap();
+    let table_end = unverified_section.find("\n\n<details>").unwrap();
+    assert!(
+        unverified_section[..table_end]
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .all(|line| !line.contains("Complete verifier diagnostics"))
+    );
+    let tables = shared.split("## Excluded helpers").next().unwrap();
+    assert!(!tables.contains("excludedHelper"));
+    assert!(!tables.contains("internalPost"));
+
+    let symbols = SymbolTable::build(&items);
+    let options = RenderOptions {
+        ledger: Some(ledger),
+        docfx: true,
+        ..RenderOptions::default()
+    };
+    let dir = render_to("coverage-acceptance");
+    render_multi_file(&items, &symbols, &dir, &options).unwrap();
+    let unverified_page =
+        fs::read_to_string(dir.join("functions").join("unverifiedModel.md")).unwrap();
+    assert!(unverified_page.contains(
+        "**Implementation source:** `unverifiedImpl` in [`cpp/src/unverified.cpp`](https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp)."
+    ));
+    assert!(unverified_page.contains(
+        "<details><summary>Complete verifier diagnostics</summary>\n\n```text\nError: unsupported type: %reference\nUnknown type alias Ident \"reference\"\n```"
+    ));
+    assert!(unverified_page.contains("aria-label=\"Copy verifier log\""));
+    assert!(unverified_page.contains("```cpp\n  if (!ready) return false;\n```"));
+    let proven_page = fs::read_to_string(dir.join("functions").join("provenModel.md")).unwrap();
+    assert!(proven_page.contains("**2 observable contract clauses**"));
+    assert!(proven_page.contains("| Return value |"));
+    assert!(proven_page.contains("| `this` post-state |"));
+    assert!(proven_page.contains("parts of one implementation proof"));
+    assert!(proven_page.contains("**ABI note:** the return value uses **sret**"));
+    assert!(proven_page.contains("remaining **7 padding bytes**"));
+    assert!(proven_page.contains("canonical C++ Boolean representation"));
+    assert!(proven_page.contains("```mermaid\nflowchart LR"));
+    assert!(proven_page.contains("Proof-relevant sources"));
+    assert!(proven_page.contains("--config=specs/CoverageAcceptance.toml"));
+    assert!(!proven_page.contains("C:/Users/") && !proven_page.contains("//?/"));
+    fs::write(dir.join("coverage.md"), &matrix).unwrap();
+    let home = fs::read_to_string(dir.join("index.md")).unwrap();
+    assert!(home.contains(&shared), "home and coverage content diverged");
+    let functions_section = home.split("## Functions").nth(1).unwrap();
+    assert!(!functions_section.contains("excludedHelper"));
+    assert!(!functions_section.contains("internalPost"));
+    assert_docfx_coverage_table(&dir);
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn assert_docfx_coverage_table(dir: &Path) {
+    if std::process::Command::new("docfx")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+    fs::write(
+        dir.join("docfx.json"),
+        r#"{
+  "build": {
+    "content": [{ "files": ["**/*.md"] }],
+    "dest": "_site",
+    "globalMetadata": { "_disableContribution": true }
+  }
+}"#,
+    )
+    .unwrap();
+    let output = std::process::Command::new("docfx")
+        .arg("docfx.json")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "DocFX failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let build_log = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for warning in build_log
+        .lines()
+        .filter(|line| line.contains("InvalidFileLink"))
+    {
+        assert!(
+            !warning.contains("cpp/src/")
+                && !warning.contains("generated.saw")
+                && !warning.contains("verify_out"),
+            "coverage emitted a broken DocFX link: {warning}"
+        );
+    }
+    for page in ["index.html", "coverage.html"] {
+        let html = fs::read_to_string(dir.join("_site").join(page)).unwrap();
+        assert!(
+            html.contains("<table"),
+            "coverage table missing from {page} DOM"
+        );
+        assert!(
+            !html.contains("| Function | Source | Maps to | Notes |")
+                && !html.contains("| Function | Source | Maps to | Reason codes | Notes |"),
+            "coverage table rendered as literal Markdown in {page}"
+        );
+        assert!(html.contains("Complete verifier diagnostics"));
+        assert!(
+            html.contains("href=\"functions/unverifiedModel.html\"")
+                && html.contains("><code>unverifiedImpl</code></a>"),
+            "coverage function does not link to its detail page in {page}"
+        );
+        assert!(
+            html.contains("<pre><code class=\"lang-text\">")
+                || html.contains("<pre><code class=\"language-text\">"),
+            "diagnostics are not a highlighted text code block in {page}"
+        );
+        assert!(
+            html.contains("aria-label=\"Copy verifier log\"")
+                && html.contains("navigator.clipboard.writeText"),
+            "diagnostics have no copy control in {page}"
+        );
+    }
+    let function_html =
+        fs::read_to_string(dir.join("_site/functions/unverifiedModel.html")).unwrap();
+    assert!(function_html.contains(
+        "href=\"https://github.com/example/protocol/blob/verification/cpp/src/unverified.cpp\""
+    ));
+    assert!(function_html.contains("Complete verifier diagnostics"));
+    assert!(function_html.contains("aria-label=\"Copy verifier log\""));
+    assert!(
+        function_html.contains("<code class=\"lang-cpp\">")
+            || function_html.contains("<code class=\"language-cpp\">"),
+        "C++ implementation body was not syntax highlighted"
+    );
+    let proven_html = fs::read_to_string(dir.join("_site/functions/provenModel.html")).unwrap();
+    assert!(proven_html.contains("2 observable contract clauses"));
+    assert!(proven_html.contains("Return value") && proven_html.contains("post-state"));
+    assert!(proven_html.contains("class=\"proof-clause\""));
+    assert!(!proven_html.contains("Unsupported markdown"));
+    assert!(!proven_html.contains("[`provenModel`]"));
+    assert!(
+        proven_html.contains("class=\"lang-mermaid\"")
+            || proven_html.contains("class=\"language-mermaid\"")
+            || proven_html.contains("class=\"mermaid\"")
+    );
+    assert!(proven_html.contains("Show complete generated script"));
+    assert!(!proven_html.contains("C:/Users/") && !proven_html.contains("//?/"));
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

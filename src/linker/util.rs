@@ -72,11 +72,11 @@ pub(crate) fn sanitize_slug(s: &str) -> String {
 
 /// Derive a category slug from a section title like "Category A: Key Lifecycle Safety".
 pub(super) fn category_slug(title: &str) -> String {
-    // Strip "Category X: " prefix if present.
-    let payload = if let Some(pos) = title.find(':') {
-        title[pos + 1..].trim()
-    } else {
-        title.trim()
+    let payload = match title.find(':') {
+        Some(pos) if pos > 0 && !title[..pos].ends_with(char::is_whitespace) => {
+            title[pos + 1..].trim()
+        }
+        _ => title.trim(),
     };
     sanitize_slug(&payload.to_case(Case::Kebab))
 }

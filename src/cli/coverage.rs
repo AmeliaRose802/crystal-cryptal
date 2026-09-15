@@ -88,7 +88,40 @@ pub(crate) fn build_ledger_from_cli(
             (m.module_name.clone(), prefix, m.items.as_slice())
         })
         .collect();
-    Some(build_ledger(&ledger_inputs, &inventory, &config))
+    let mut ledger = build_ledger(&ledger_inputs, &inventory, &config);
+    ledger.source_url_base = discover_source_url_base();
+    Some(ledger)
+}
+
+/// Discover a stable web URL for source links from the current Git checkout.
+/// Generated docs may live outside the source tree, so repository-relative
+/// Markdown links would be interpreted as nonexistent DocFX content.
+fn discover_source_url_base() -> Option<String> {
+    let remote = git_output(&["remote", "get-url", "origin"])?;
+    let revision = git_output(&["branch", "--show-current"])
+        .filter(|branch| !branch.is_empty())
+        .or_else(|| git_output(&["rev-parse", "HEAD"]))?;
+    let repository = github_https_url(&remote)?;
+    Some(format!("{repository}/blob/{revision}/"))
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git").args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn github_https_url(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches('/').trim_end_matches(".git");
+    if let Some(path) = trimmed.strip_prefix("git@github.com:") {
+        return Some(format!("https://github.com/{path}"));
+    }
+    if trimmed.starts_with("https://github.com/") || trimmed.starts_with("http://github.com/") {
+        return Some(trimmed.replacen("http://", "https://", 1));
+    }
+    None
 }
 
 /// Render the coverage matrix and write it to `<output>/coverage.md`.
@@ -97,5 +130,23 @@ pub(crate) fn write_coverage_matrix(output: &Path, ledger: &Ledger) {
     let target = output.join("coverage.md");
     if let Err(e) = std::fs::write(&target, md) {
         eprintln!("warning: cannot write {}: {e}", target.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_https_url;
+
+    #[test]
+    fn github_remote_is_normalized_for_source_links() {
+        assert_eq!(
+            github_https_url("https://github.com/owner/repository.git").as_deref(),
+            Some("https://github.com/owner/repository")
+        );
+        assert_eq!(
+            github_https_url("git@github.com:owner/repository.git").as_deref(),
+            Some("https://github.com/owner/repository")
+        );
+        assert_eq!(github_https_url("https://example.com/repository.git"), None);
     }
 }

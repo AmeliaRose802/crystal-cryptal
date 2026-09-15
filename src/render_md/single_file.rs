@@ -17,6 +17,7 @@ use super::proof::{
     proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
+use super::saw_explain::render_generated_script;
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
 use super::util::{
     anchor_for, camel_to_spaced, describe_type, is_simple_constructor, render_doc_body,
@@ -176,6 +177,9 @@ pub fn render_single_file(
                 if let Some(section) = render_verify_command_section(proof_status) {
                     out.push_str(&section);
                 }
+                if let Some(script) = render_generated_script(proof_status) {
+                    out.push_str(&script);
+                }
 
                 let visible_doc: Vec<String> = doc
                     .iter()
@@ -286,6 +290,9 @@ pub fn render_single_file(
                 }
                 if let Some(section) = render_verify_command_section(proof_status) {
                     out.push_str(&section);
+                }
+                if let Some(script) = render_generated_script(proof_status) {
+                    out.push_str(&script);
                 }
 
                 if !doc.is_empty() {

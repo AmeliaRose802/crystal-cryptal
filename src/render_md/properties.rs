@@ -18,6 +18,7 @@ use super::proof::{
     proof_badge, proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
+use super::saw_explain::render_generated_script;
 use super::util::{
     camel_to_spaced, category_slug_from_title, prefixed_file, strip_category_prefix,
 };
@@ -167,6 +168,9 @@ pub(super) fn render_property_files(
                 }
                 if let Some(section) = render_verify_command_section(proof_status) {
                     out.push_str(&section);
+                }
+                if let Some(script) = render_generated_script(proof_status) {
+                    out.push_str(&script);
                 }
 
                 if !options.no_details && !body.is_empty() {

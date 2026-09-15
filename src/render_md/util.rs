@@ -276,6 +276,7 @@ where
     let mut in_code = false;
     let mut blank_pending = false;
     let mut wrote_any = false;
+    let mut pending_code_language = "text";
     for line in doc {
         let trimmed_line = line.trim();
         if trimmed_line.is_empty() {
@@ -292,7 +293,7 @@ where
                 if wrote_any {
                     out.push('\n');
                 }
-                out.push_str("```text\n");
+                let _ = writeln!(out, "```{pending_code_language}");
                 in_code = true;
             }
             out.push_str(line);
@@ -306,6 +307,7 @@ where
                 out.push('\n');
             }
             let _ = writeln!(out, "{}", resolve(line));
+            pending_code_language = implementation_language(trimmed_line).unwrap_or("text");
             wrote_any = true;
         }
         blank_pending = false;
@@ -318,12 +320,26 @@ where
     }
 }
 
+fn implementation_language(label: &str) -> Option<&'static str> {
+    let label = label.trim_end_matches(':').trim().to_ascii_lowercase();
+    match label.as_str() {
+        "c++ body" | "cpp body" | "c++ implementation" | "cpp implementation" => Some("cpp"),
+        "rust body" | "rust implementation" => Some("rust"),
+        "c body" | "c implementation" => Some("c"),
+        "python body" | "python implementation" => Some("python"),
+        "javascript body" | "javascript implementation" => Some("javascript"),
+        "typescript body" | "typescript implementation" => Some("typescript"),
+        _ => None,
+    }
+}
+
 /// Strip "Category X: " or trailing dashes from a section title.
 pub(super) fn strip_category_prefix(title: &str) -> String {
-    let payload = if let Some(pos) = title.find(':') {
-        title[pos + 1..].trim()
-    } else {
-        title.trim()
+    let payload = match title.find(':') {
+        Some(pos) if pos > 0 && !title[..pos].ends_with(char::is_whitespace) => {
+            title[pos + 1..].trim()
+        }
+        _ => title.trim(),
     };
     payload.trim_end_matches('-').trim().to_string()
 }
@@ -362,5 +378,47 @@ mod tests {
         assert!(cleaned.contains("Bounded check"));
         assert!(cleaned.contains("Field length in bytes"));
         assert!(!cleaned.to_lowercase().contains("scope of this proof"));
+    }
+
+    #[test]
+    fn category_prefix_ignores_cryptol_commands_inside_titles() {
+        let title = "Cryptol properties (provable by :prove)";
+        assert_eq!(strip_category_prefix(title), title);
+        assert_ne!(category_slug_from_title(title), "prove)");
+        assert_eq!(
+            strip_category_prefix("Access Control: enforceAccess"),
+            "enforceAccess"
+        );
+        assert_eq!(
+            strip_category_prefix("Category: Access Control"),
+            "Access Control"
+        );
+    }
+
+    #[test]
+    fn implementation_body_uses_language_specific_fence() {
+        let mut cpp = String::new();
+        render_doc_body(
+            &mut cpp,
+            &["C++ body:".into(), "  if (ready) return 1;".into()],
+            str::to_string,
+        );
+        assert!(cpp.contains("```cpp\n  if (ready) return 1;\n```"));
+
+        let mut rust = String::new();
+        render_doc_body(
+            &mut rust,
+            &["Rust implementation:".into(), "  match value {".into()],
+            str::to_string,
+        );
+        assert!(rust.contains("```rust\n  match value {\n```"));
+
+        let mut prose = String::new();
+        render_doc_body(
+            &mut prose,
+            &["Example:".into(), "  arbitrary content".into()],
+            str::to_string,
+        );
+        assert!(prose.contains("```text\n  arbitrary content\n```"));
     }
 }

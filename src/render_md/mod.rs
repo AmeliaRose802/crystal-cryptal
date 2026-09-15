@@ -19,7 +19,9 @@ mod functions;
 mod index;
 mod mermaid;
 mod proof;
+mod proof_contract;
 mod properties;
+mod saw_explain;
 mod signature;
 mod single_file;
 mod types;
@@ -283,6 +285,41 @@ property P99_TemptingButFalse x = x > 0
             "misleading equivalence callout must be suppressed for intentional counterexamples, got:\n{cat_md}"
         );
 
+        let _ = stdfs::remove_dir_all(&tmpdir);
+    }
+
+    #[test]
+    fn cryptol_command_in_section_title_does_not_create_prove_category() {
+        let source = r#"
+module Categories where
+
+// ── Cryptol properties (design-level corollaries, provable by :prove) ──
+property KS1_ActivateLatchMonotone x = x == x
+"#;
+        let items = crate::parser::parse(source);
+        let symbols = SymbolTable::build(&items);
+        let tmpdir = std::env::temp_dir().join("pretty_specs_category_command_test");
+        let _ = stdfs::remove_dir_all(&tmpdir);
+        let options = RenderOptions {
+            docfx: true,
+            ..RenderOptions::default()
+        };
+        render_multi_file(&items, &symbols, &tmpdir, &options).unwrap();
+
+        let index = stdfs::read_to_string(tmpdir.join("index.md")).unwrap();
+        let toc = stdfs::read_to_string(tmpdir.join("toc.yml")).unwrap();
+        assert!(!index.contains("properties/prove).md"), "index: {index}");
+        assert!(!toc.contains("href: properties/prove).md"), "toc: {toc}");
+        assert!(!tmpdir.join("properties/prove).md").exists());
+        assert!(
+            stdfs::read_dir(tmpdir.join("properties"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("cryptol-properties"))
+        );
         let _ = stdfs::remove_dir_all(&tmpdir);
     }
 }

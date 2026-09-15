@@ -144,6 +144,16 @@ fn pipeline_forwards_current_cli_shape_and_supports_repeated_directories() {
     assert_eq!(function["overall"]["status"], "proven");
     assert_eq!(function["by_language"]["cpp"]["status"], "proven");
     assert_eq!(function["by_language"]["cpp"]["impl_file"], "b_match.cpp");
+    let proof_script = function["overall"]["proof_script"].as_str().unwrap();
+    assert!(proof_script.contains("llvm_load_module \"fixture.bc\""));
+    assert!(proof_script.contains("// override: _Mtx_lock  [declare-only]"));
+    assert!(proof_script.contains("// uninterpreted: fixtureEq (symbol: fixture_eq)"));
+    assert_eq!(function["overall"]["clauses"].as_array().unwrap().len(), 2);
+    assert_eq!(function["overall"]["clauses"][1]["region"], "state");
+    let command = function["overall"]["verify_command"].as_str().unwrap();
+    assert!(command.starts_with("saw-spec-gen verify-cpp"));
+    assert!(!command.contains("//?/"));
+    assert!(!command.contains(&project.root.to_string_lossy().replace('\\', "/")));
 }
 
 #[test]
@@ -207,6 +217,11 @@ fn adapter_keeps_the_strongest_result_across_translation_units() {
         "VERIFIED",
         "decision.cpp",
     );
+    fs::write(
+        results.join("a-defining-tu/verify.saw"),
+        "// Step 1: Load bitcode\nm <- llvm_load_module \"decision.bc\";\n",
+    )
+    .unwrap();
     write_result(
         &results.join("z-caller-tu/result.json"),
         "verifiedLeaf",
@@ -245,6 +260,12 @@ fn adapter_keeps_the_strongest_result_across_translation_units() {
     assert_eq!(
         manifest["functions"]["verifiedLeaf"]["by_language"]["cpp"]["impl_file"],
         "decision.cpp"
+    );
+    assert!(
+        manifest["functions"]["verifiedLeaf"]["overall"]["proof_script"]
+            .as_str()
+            .unwrap()
+            .contains("decision.bc")
     );
     assert_eq!(
         manifest["functions"]["disprovedLeaf"]["overall"]["status"],
@@ -337,6 +358,56 @@ fn disproved_result_is_preserved_as_a_proof_outcome() {
     let status = &manifest["functions"]["pipelineIdentity"]["overall"];
     assert_eq!(status["status"], "failed");
     assert_eq!(status["reason"], "counterexample found");
+}
+
+#[test]
+fn verifier_error_preserves_actionable_summary_and_complete_diagnostics() {
+    let project = TestProject::new("actionable-diagnostic");
+    let output = project
+        .command()
+        .arg("--best-effort")
+        .env("MOCK_SAW_SPEC_GEN_VERIFY_ERROR", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let result_path = project
+        .verify_output
+        .join("out_pipelineIdentity/result.json");
+    let result: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(result_path).unwrap()).unwrap();
+    assert_eq!(
+        result["message"],
+        "Could not find definition for Unknown type alias Ident \"reference\""
+    );
+    let diagnostic = result["log_excerpt"].as_str().unwrap();
+    assert!(diagnostic.contains("Unknown type alias Ident"));
+    assert!(diagnostic.contains("Cryptol: [error] at verify.saw:8:1"));
+    assert!(
+        !diagnostic.contains(&project.root.to_string_lossy().replace('\\', "/")),
+        "absolute project path leaked: {diagnostic}"
+    );
+    assert!(
+        result["verify_script"]
+            .as_str()
+            .unwrap()
+            .ends_with("generated-verify.saw")
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&project.manifest).unwrap()).unwrap();
+    let status = &manifest["functions"]["pipelineIdentity"]["overall"];
+    assert_eq!(
+        status["reason"],
+        "Could not find definition for Unknown type alias Ident \"reference\""
+    );
+    assert!(
+        status["log_excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown type alias")
+    );
+    assert!(status["verify_script"].as_str().is_some());
 }
 
 fn write_result(path: &Path, cryptol_fn: &str, verdict: &str, impl_file: &str) {

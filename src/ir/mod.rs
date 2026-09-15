@@ -8,6 +8,19 @@ mod tests;
 
 pub use manifest::{ProofManifest, load_proof_manifest};
 
+/// One observable checked as part of an implementation equivalence proof.
+/// Multiple clauses describe one proof, not independently proven functions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofClause {
+    pub name: String,
+    pub cryptol_fn: String,
+    pub assertion: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<String>,
+}
+
 /// Proof status for a property, populated from an external proof manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProofStatus {
@@ -35,6 +48,15 @@ pub enum ProofStatus {
         /// absent — the page can synthesise `saw <path>`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        /// Contents of the generated SAW script, captured while the verifier
+        /// artifact is still available.  The renderer uses this to explain
+        /// the proof boundary and show exact, auditable source excerpts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proof_script: Option<String>,
+        /// Return and memory post-state checks discharged together by the
+        /// single `llvm_verify` invocation.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        clauses: Vec<ProofClause>,
     },
     Assumed,
     Failed {
@@ -55,6 +77,10 @@ pub enum ProofStatus {
         verify_command: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_script: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proof_script: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        clauses: Vec<ProofClause>,
     },
     NotAttempted,
 }

@@ -40,24 +40,18 @@ pub(super) fn render_index(
 
     if let Some(ledger) = options.ledger.as_ref() {
         let coverage_href = coverage_link_target(path_prefix);
-        let unverified = ledger.count(crate::coverage::CoverageBadge::Unverified);
-        let proven = ledger.count(crate::coverage::CoverageBadge::Proven);
-        let bounded = ledger.count(crate::coverage::CoverageBadge::ProvenBounded);
-        let trusted = ledger.count(crate::coverage::CoverageBadge::TrustedAssumption);
-        let abs = ledger.count(crate::coverage::CoverageBadge::AbiAdapter);
-        let spec = ledger.count(crate::coverage::CoverageBadge::SpecOnly);
-        let _ = writeln!(out, "## Coverage at a glance\n");
-        let _ = writeln!(
-            out,
-            "✅ {proven} proven · 🔲 {bounded} bounded · 🔒 {trusted} trusted assumptions · 🧩 {abs} adapters/stand-ins · ⚠️ {unverified} **unverified** · 📄 {spec} spec-only\n"
-        );
-        let _ = writeln!(
-            out,
-            "See the full breakdown — including every real function the codebase \
-             contains, whether or not it was modeled — on the [Coverage Matrix]({coverage_href}). \
-             Pages here that carry a 🧩, 🔲, or ⚠️ badge surface the caveat in a \
-             banner at the top.\n"
-        );
+        if path_prefix.is_empty() {
+            out.push_str(&crate::coverage::render_coverage_content(ledger));
+            let _ = writeln!(
+                out,
+                "Dedicated permalink: [Coverage Matrix]({coverage_href}).\n"
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "Coverage for all modules: [Coverage Matrix]({coverage_href}).\n"
+            );
+        }
     }
 
     if items
@@ -157,7 +151,10 @@ pub(super) fn render_index(
 
     if has_functions {
         let _ = writeln!(out, "## Functions\n");
-        let fns = collect_functions_for_index(items);
+        let mut fns = collect_functions_for_index(items);
+        if let Some(ledger) = options.ledger.as_ref() {
+            fns.retain(|(name, _, _)| ledger.lookup(name).is_some());
+        }
         if !fns.is_empty() {
             out.push_str(&render_functions_table(
                 &fns,

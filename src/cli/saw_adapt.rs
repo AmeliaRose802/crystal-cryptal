@@ -1,10 +1,15 @@
 // SAW log / result-json adapters: read upstream verifier output and emit a
 // unified `proof_manifest.json` consumed by the renderer.
 
+mod diagnostic;
+mod script;
+
 use std::path::{Path, PathBuf};
 
-use pretty_specs::ir::ProofStatus;
+use pretty_specs::ir::{ProofClause, ProofStatus};
 use pretty_specs::saw_log::parse_saw_log;
+
+use diagnostic::{best_failure_reason, normalize_machine_paths, normalize_verify_command};
 
 pub(crate) fn run_saw_log_adapter(log_path: &Path, output: &Path) {
     let text = std::fs::read_to_string(log_path).unwrap_or_else(|e| {
@@ -82,6 +87,8 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             iterations,
             verify_command,
             verify_script,
+            proof_script,
+            clauses,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("proven"));
@@ -101,6 +108,12 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
             }
+            if let Some(script) = proof_script {
+                m.insert("proof_script".into(), serde_json::json!(script));
+            }
+            if !clauses.is_empty() {
+                m.insert("clauses".into(), serde_json::json!(clauses));
+            }
             serde_json::Value::Object(m)
         }
         ProofStatus::Failed {
@@ -109,6 +122,8 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
+            clauses,
         } => {
             let mut m = serde_json::Map::new();
             m.insert("status".into(), serde_json::json!("failed"));
@@ -124,6 +139,12 @@ pub(crate) fn proof_status_to_json(status: &ProofStatus) -> serde_json::Value {
             }
             if let Some(scr) = verify_script {
                 m.insert("verify_script".into(), serde_json::json!(scr));
+            }
+            if let Some(script) = proof_script {
+                m.insert("proof_script".into(), serde_json::json!(script));
+            }
+            if !clauses.is_empty() {
+                m.insert("clauses".into(), serde_json::json!(clauses));
             }
             serde_json::Value::Object(m)
         }
@@ -159,13 +180,14 @@ pub(crate) fn run_adapt_saw_results(dir: &Path, output: &Path) {
                 continue;
             }
         };
-        let value: serde_json::Value = match serde_json::from_str(&text) {
+        let mut value: serde_json::Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("warning: cannot parse {}: {e}", path.display());
                 continue;
             }
         };
+        script::attach_proof_script(&mut value, path);
 
         let fn_name = extract_fn_name(&value, path);
         let proof_status = result_value_to_status(&value);
@@ -268,7 +290,7 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
     let message = value
         .get("message")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
     let overrides: Vec<String> = value
         .get("overrides")
         .and_then(|v| v.as_array())
@@ -285,19 +307,27 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
         .and_then(|v| v.as_u64());
     let counterexample = extract_counterexample(value);
     let log_excerpt: Option<String> = value
-        .get("log_excerpt")
+        .get("diagnostic")
+        .or_else(|| value.get("log_excerpt"))
         .or_else(|| value.get("log"))
         .or_else(|| value.get("stderr"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
     let verify_command: Option<String> = value
         .get("verify_command")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_verify_command);
     let verify_script: Option<String> = value
         .get("verify_script")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(normalize_machine_paths);
+    let proof_script: Option<String> = value
+        .get("proof_script")
+        .and_then(|v| v.as_str())
+        .map(normalize_machine_paths);
+    let clauses = extract_contract_clauses(value);
+
+    let failure_reason = || best_failure_reason(message.as_deref(), log_excerpt.as_deref());
 
     match raw_status {
         "verified" | "VERIFIED" | "Q.E.D." | "valid" | "EQUIVALENT" => ProofStatus::Proven {
@@ -307,32 +337,49 @@ fn result_value_to_status(value: &serde_json::Value) -> ProofStatus {
             iterations,
             verify_command,
             verify_script,
+            proof_script,
+            clauses,
         },
         "counterexample" | "DISPROVED" | "NOT EQUIVALENT" | "invalid" | "sat" => {
             ProofStatus::Failed {
-                reason: message.unwrap_or_else(|| "counterexample found".into()),
+                reason: failure_reason().unwrap_or_else(|| "counterexample found".into()),
                 counterexample,
                 log_excerpt,
                 verify_command,
                 verify_script,
+                proof_script,
+                clauses,
             }
         }
         "timeout" => ProofStatus::Failed {
-            reason: message.unwrap_or_else(|| "timeout".into()),
+            reason: failure_reason().unwrap_or_else(|| "timeout".into()),
             counterexample,
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
+            clauses,
         },
         "error" | "UNKNOWN" => ProofStatus::Failed {
-            reason: message.unwrap_or_else(|| "error during verification".into()),
+            reason: failure_reason().unwrap_or_else(|| "error during verification".into()),
             counterexample,
             log_excerpt,
             verify_command,
             verify_script,
+            proof_script,
+            clauses,
         },
         _ => ProofStatus::NotAttempted,
     }
+}
+
+fn extract_contract_clauses(value: &serde_json::Value) -> Vec<ProofClause> {
+    value
+        .get("contract")
+        .and_then(|contract| contract.get("clauses"))
+        .or_else(|| value.get("clauses"))
+        .and_then(|clauses| serde_json::from_value(clauses.clone()).ok())
+        .unwrap_or_default()
 }
 
 /// Extract a counterexample as a human-readable string. Prefers `counterexample_text`

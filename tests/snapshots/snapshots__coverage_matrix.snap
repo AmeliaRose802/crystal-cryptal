@@ -1,25 +1,25 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 202
 expression: md
 ---
 # Coverage Matrix
 
-> **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by one of five badges. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
+> **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by its proof/coverage status. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
 
-## Summary
+## Coverage summary
 
 | Badge | Meaning | Count |
 |-------|---------|-------|
+| ❌ | Disproved | 0 |
 | ✅ | Proven | 0 |
 | 🔲 | Proven (bounded) | 0 |
 | 🔒 | Trusted assumption | 2 |
 | 🧩 | ABI adapter / stand-in | 1 |
-| ⚠️ | Implemented, unverified | 6 |
+| ⚠️ | Implemented, unverified | 4 |
 | 📄 | Spec-only | 14 |
-| | **Total** | **23** |
+| | **Total** | **21** |
 
-> ⚠️ **6 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
+> ⚠️ **4 real functions have no proof and no declared abstraction.** These are the gaps a security review needs to inspect first.
 
 ## ⚠️ Implemented, unverified
 
@@ -27,21 +27,19 @@ Real production functions with no proof. This is the gap.
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| `canonicalizePayload` | impl (cpp) | `canonicalize_lp` *(bounded model only)* | `R1 unbounded`, `R2 stl-heap` | `cpp/src/canonical.cpp` |
-| `canonicalize_lp` | impl (cpp) | `canonLenPrefixed` *(bounded model only)* | `R1 unbounded` | `cpp/src/canonical.cpp` |
-| `handle_provision` | impl (cpp) | composes `provisionKey` | `R6 compositional` | `cpp/src/controller.cpp` |
-| `hmac_sha256` | impl (cpp) | `hmacSha256` | `R2 stl-heap` | `cpp/src/hmac.cpp` |
-| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) | — | `R6 compositional` | `cpp/src/decisions.cpp` |
-| `sha256` | impl (cpp) | — | `R1 unbounded` | `cpp/src/sha256.cpp` |
+| [`canonicalizePayload`](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp)) | `canonicalize_lp` | `R1 unbounded`, `R2 stl-heap` | — |
+| [`handle_provision`](https://github.com/example/protocol/blob/verification/cpp/src/controller.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/controller.cpp)) | composes `provisionKey` | `R6 compositional` | — |
+| [`provisionKey`](functions/provisionKey.md) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/decisions.cpp)) | implementation `provisionKey` ↔ model [`provisionKey`](functions/provisionKey.md) | `R6 compositional` | — |
+| [`sha256`](https://github.com/example/protocol/blob/verification/cpp/src/sha256.cpp) | impl (cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/sha256.cpp)) | — | `R1 unbounded` | — |
 
-## 🔒 Trusted assumption
+## 🔒 Trusted assumptions
 
 Assumed contracts for real external dependencies. These are explicit trust boundaries, not machine-checked equivalence proofs.
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| [`hmacSha256`](functions/hmacSha256.md) | model (SDEP) | stands in for `hmac_sha256` | — | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
-| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | — | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
+| [`hmac_sha256`](functions/hmacSha256.md) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/hmac.cpp)) | implementation `hmac_sha256` ↔ model [`hmacSha256`](functions/hmacSha256.md) | `R2 stl-heap` | Trusted HMAC contract; real SHA-256/HMAC code is not proven equivalent here. |
+| [`isValidSignature`](functions/isValidSignature.md) | model (SDEP) | external contract ↔ model [`isValidSignature`](functions/isValidSignature.md) | — | Trusted signature-validity contract; production verifier is not proven equivalent here. |
 
 ## 🧩 ABI adapter / stand-in
 
@@ -49,28 +47,28 @@ Cryptol definitions with no real-code counterpart (placeholders, uninterpreted f
 
 | Function | Source | Maps to | Reason codes | Notes |
 |----------|--------|---------|--------------|-------|
-| [`canonLenPrefixed`](functions/canonLenPrefixed.md) | model (SDEP) | stands in for `canonicalize_lp` | — | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
+| [`canonicalize_lp`](functions/canonLenPrefixed.md) | model + impl (SDEP ↔ cpp) ([source](https://github.com/example/protocol/blob/verification/cpp/src/canonical.cpp)) | implementation `canonicalize_lp` ↔ model [`canonLenPrefixed`](functions/canonLenPrefixed.md) *(bounded model only)* | `R1 unbounded` | Bounded fixed-width encoder used only for length-prefix reasoning. The general string canonicalizer in `cpp/src/canonical.cpp` is unverified. |
 
 ## 📄 Spec-only
 
 Lives in the model on purpose (gap-exhibiting reference functions, etc.) — no implementation expected.
 
-| Function | Source | Maps to | Reason codes | Notes |
-|----------|--------|---------|--------------|-------|
-| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — | — |
-| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — | — |
-| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — | — |
-| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — | — |
-| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — | — |
-| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — | — |
-| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — | — |
-| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — | — |
-| [`lpField`](functions/lpField.md) | model (SDEP) | — | — | — |
-| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — | — |
-| [`none`](functions/none.md) | model (SDEP) | — | — | — |
-| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — | — |
-| [`some`](functions/some.md) | model (SDEP) | — | — | — |
-| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — | — |
+| Function | Source | Maps to | Notes |
+|----------|--------|---------|-------|
+| [`authenticate`](functions/authenticate.md) | model (SDEP) | — | — |
+| [`canonNormalized`](functions/canonNormalized.md) | model (SDEP) | — | — |
+| [`canonicalizeS`](functions/canonicalizeS.md) | model (SDEP) | — | — |
+| [`enforceAccess`](functions/enforceAccess.md) | model (SDEP) | — | — |
+| [`enrollDevice`](functions/enrollDevice.md) | model (SDEP) | — | — |
+| [`fieldNormalized`](functions/fieldNormalized.md) | model (SDEP) | — | — |
+| [`getStatus`](functions/getStatus.md) | model (SDEP) | — | — |
+| [`isValidRequestDate`](functions/isValidRequestDate.md) | model (SDEP) | — | — |
+| [`lpField`](functions/lpField.md) | model (SDEP) | — | — |
+| [`lpHeader`](functions/lpHeader.md) | model (SDEP) | — | — |
+| [`none`](functions/none.md) | model (SDEP) | — | — |
+| [`requestNormalized`](functions/requestNormalized.md) | model (SDEP) | — | — |
+| [`some`](functions/some.md) | model (SDEP) | — | — |
+| [`verifierTimestamp_current`](functions/verifierTimestamp_current.md) | model (SDEP) | — | — |
 
 ## Excluded helpers
 

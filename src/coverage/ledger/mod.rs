@@ -2,7 +2,7 @@
 // the implementation inventory, and the `coverage.toml` overrides.
 //
 // The ledger is the set (Implementation ∪ Model). Each entry is classified
-// into exactly one of five badges. See module docs for the rationale.
+// into exactly one proof/coverage badge. See module docs for the rationale.
 
 mod badge;
 mod classify;
@@ -39,6 +39,10 @@ pub enum LedgerSource {
 #[derive(Debug, Clone)]
 pub struct LedgerEntry {
     pub name: String,
+    /// Real implementation identifier when this model row is joined through
+    /// an inventory `models` mapping. This remains distinct from `name`, which
+    /// is the Cryptol definition used for proof-status lookup and page links.
+    pub impl_name: Option<String>,
     pub source: LedgerSource,
     pub badge: CoverageBadge,
 
@@ -66,6 +70,10 @@ pub struct LedgerEntry {
 #[derive(Debug, Default, Clone)]
 pub struct Ledger {
     pub entries: Vec<LedgerEntry>,
+    /// Absolute `<repository>/blob/<revision>/` prefix for implementation
+    /// links. When unavailable, source paths render as text instead of broken
+    /// links relative to generated documentation.
+    pub source_url_base: Option<String>,
     /// Functions suppressed by `coverage.toml [exclude].functions`. Surfaced
     /// as a footnote on the matrix so the suppression is documented rather
     /// than silent.
@@ -145,10 +153,12 @@ pub fn build_ledger(
     // same `name` (e.g. cpp + rust mirror of the same function) collapse
     // to one ledger row, keyed by name, listing the first language seen.
     let mut inv_by_name: BTreeMap<String, &InventoryEntry> = BTreeMap::new();
+    let mut inv_by_model: BTreeMap<String, &InventoryEntry> = BTreeMap::new();
     let mut modeled_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in &inventory.functions {
         inv_by_name.entry(entry.name.clone()).or_insert(entry);
         if let Some(model_name) = &entry.models {
+            inv_by_model.entry(model_name.clone()).or_insert(entry);
             modeled_by
                 .entry(model_name.clone())
                 .or_default()
@@ -171,7 +181,10 @@ pub fn build_ledger(
             seen.insert(name.clone());
             continue;
         }
-        let inv = inv_by_name.get(name).copied();
+        let inv = inv_by_name
+            .get(name)
+            .or_else(|| inv_by_model.get(name))
+            .copied();
         let source = if inv.is_some() {
             LedgerSource::Both
         } else {
@@ -191,6 +204,7 @@ pub fn build_ledger(
         });
         entries.push(LedgerEntry {
             name: name.clone(),
+            impl_name: inv.map(|entry| entry.name.clone()),
             source,
             badge,
             module: Some(mf.module.clone()),
@@ -214,6 +228,9 @@ pub fn build_ledger(
             proof: mf.proof.clone(),
         });
         seen.insert(name.clone());
+        if let Some(inv) = inv {
+            seen.insert(inv.name.clone());
+        }
     }
 
     // Implementation-only side.
@@ -229,6 +246,7 @@ pub fn build_ledger(
         let reason_codes = collect_reason_codes(name, Some(entry), config, true);
         entries.push(LedgerEntry {
             name: name.clone(),
+            impl_name: Some(name.clone()),
             source: LedgerSource::ImplementationOnly,
             badge,
             module: None,
@@ -257,7 +275,11 @@ pub fn build_ledger(
     excluded.sort();
     excluded.dedup();
 
-    Ledger { entries, excluded }
+    Ledger {
+        entries,
+        source_url_base: None,
+        excluded,
+    }
 }
 
 struct ModelFn {

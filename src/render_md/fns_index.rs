@@ -14,7 +14,7 @@ use super::util::{escape_md_cell, first_doc_line, is_constant_binding, is_simple
 pub(super) fn render_functions_index(
     items: &[Item],
     _symbols: &SymbolTable,
-    _options: &RenderOptions,
+    options: &RenderOptions,
     _path_prefix: &str,
 ) -> String {
     let mut out = String::new();
@@ -34,7 +34,10 @@ pub(super) fn render_functions_index(
          equivalence* callout.\n"
     );
 
-    let functions = collect_functions_for_index(items);
+    let mut functions = collect_functions_for_index(items);
+    if let Some(ledger) = options.ledger.as_ref() {
+        functions.retain(|(name, _, _)| ledger.lookup(name).is_some());
+    }
 
     if !functions.is_empty() {
         let _ = writeln!(

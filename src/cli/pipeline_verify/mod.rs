@@ -12,7 +12,8 @@ use std::process::Command;
 use config::prepare_config;
 use inputs::expand_impl_files;
 use result::{
-    ParsedResult, ResultKind, read_result, remove_stale_output, restore_result, write_error_result,
+    ParsedResult, ResultKind, enrich_result, read_result, remove_stale_output, restore_result,
+    subprocess_diagnostic, write_error_result,
 };
 
 use super::pipeline::PipelineArgs;
@@ -108,12 +109,15 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
         }
 
         let argv = build_argv(context, name, implementation_name, impl_file, &out_dir);
-        let status = Command::new(context.saw_program).args(&argv).status();
-        let status_text = match &status {
-            Ok(status) if status.success() => "exit 0".to_string(),
-            Ok(status) => format!("exit {}", status.code().unwrap_or(-1)),
+        let output = Command::new(context.saw_program).args(&argv).output();
+        let status_text = match &output {
+            Ok(output) if output.status.success() => "exit 0".to_string(),
+            Ok(output) => format!("exit {}", output.status.code().unwrap_or(-1)),
             Err(e) => format!("spawn error: {e}"),
         };
+        if let Ok(output) = &output {
+            enrich_result(&out_dir, output, context.saw_program, &argv);
+        }
 
         match read_result(&out_dir) {
             Ok(result) => match result.kind {
@@ -137,9 +141,15 @@ fn verify_function(name: &str, context: &VerifyContext<'_>, summary: &mut Verifi
             },
             Err(result_error) => {
                 eprintln!(" ERROR ({status_text})");
+                let diagnostic = output
+                    .as_ref()
+                    .map(subprocess_diagnostic)
+                    .unwrap_or_default();
                 attempt_errors.push(format!(
-                    "{}: {status_text}; {result_error}",
-                    impl_file.display()
+                    "{}: {status_text}; {result_error}{}{}",
+                    impl_file.display(),
+                    if diagnostic.is_empty() { "" } else { "\n" },
+                    diagnostic,
                 ));
             }
         }

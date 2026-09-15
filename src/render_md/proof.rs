@@ -85,15 +85,34 @@ pub(super) fn render_failure_details_callout(status: &Option<ProofStatus>) -> Op
     out.push('\n');
     if let Some(cx) = counterexample {
         let _ = writeln!(out, "<details><summary>Counterexample</summary>\n");
-        let _ = writeln!(out, "```text\n{}\n```\n", cx.trim_end());
+        render_copyable_text_block(&mut out, cx, "Copy counterexample");
         let _ = writeln!(out, "</details>\n");
     }
     if let Some(log) = log_excerpt {
-        let _ = writeln!(out, "<details><summary>Verifier log excerpt</summary>\n");
-        let _ = writeln!(out, "```text\n{}\n```\n", log.trim_end());
+        let _ = writeln!(
+            out,
+            "<details><summary>Complete verifier diagnostics</summary>\n"
+        );
+        render_copyable_text_block(&mut out, log, "Copy verifier log");
         let _ = writeln!(out, "</details>\n");
     }
     Some(out)
+}
+
+fn render_copyable_text_block(out: &mut String, text: &str, copy_label: &str) {
+    let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+    let _ = writeln!(out, "{fence}text\n{}\n{fence}", text.trim_end());
+    let _ = writeln!(
+        out,
+        "\n<button type=\"button\" class=\"btn btn-default btn-xs\" aria-label=\"{copy_label}\" onclick=\"navigator.clipboard.writeText(this.previousElementSibling.textContent)\">Copy</button>\n"
+    );
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Render a "Verify this yourself" section.
@@ -117,12 +136,16 @@ pub(super) fn render_verify_command_section(status: &Option<ProofStatus>) -> Opt
 
     let mut out = String::new();
     let _ = writeln!(out, "### Verify this yourself\n");
+    let _ = writeln!(
+        out,
+        "Prerequisites: install **SAW**, the selected solver, and **saw-spec-gen**; then run this from the repository root.\n"
+    );
     let command = verify_command
         .map(|s| s.to_string())
         .or_else(|| verify_script.map(|path| format!("saw \"{path}\"")));
     if let Some(cmd) = command {
         let _ = writeln!(out, "Re-run the proof locally:\n");
-        let _ = writeln!(out, "```sh\n{}\n```\n", cmd.trim());
+        let _ = writeln!(out, "```sh\n{}\n```\n", wrap_shell_command(&cmd));
     }
     if let Some(script) = verify_script
         && verify_command
@@ -132,6 +155,23 @@ pub(super) fn render_verify_command_section(status: &Option<ProofStatus>) -> Opt
         let _ = writeln!(out, "Script: `{script}`\n");
     }
     Some(out)
+}
+
+fn wrap_shell_command(command: &str) -> String {
+    let arguments: Vec<_> = command.split_whitespace().collect();
+    if arguments.len() < 4 {
+        return command.trim().to_string();
+    }
+    let mut lines = vec![format!("{} {} \\", arguments[0], arguments[1])];
+    for (index, pair) in arguments[2..].chunks(2).enumerate() {
+        let suffix = if index + 1 == arguments[2..].chunks(2).len() {
+            ""
+        } else {
+            " \\"
+        };
+        lines.push(format!("  {}{suffix}", pair.join(" ")));
+    }
+    lines.join("\n")
 }
 
 /// Render an expanded "Proof details" blockquote for `Proven` statuses that
@@ -243,6 +283,8 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
+                clauses: vec![],
             })),
             "✓"
         );
@@ -253,6 +295,8 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
+                clauses: vec![],
             })),
             "✗"
         );
@@ -270,6 +314,8 @@ mod tests {
             iterations: None,
             verify_command: None,
             verify_script: None,
+            proof_script: None,
+            clauses: vec![],
         });
         assert!(render_proof_details_callout(&status).is_none());
 
@@ -281,6 +327,8 @@ mod tests {
                 log_excerpt: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
+                clauses: vec![],
             }))
             .is_none()
         );
@@ -296,6 +344,8 @@ mod tests {
             iterations: Some(4),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
+            clauses: vec![],
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(out.contains("Proof details"), "header missing: {out}");
@@ -322,6 +372,8 @@ mod tests {
             iterations: Some(1),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
+            clauses: vec![],
         });
         let out = render_proof_details_callout(&status).expect("callout present");
         assert!(
@@ -339,6 +391,8 @@ mod tests {
             log_excerpt: None,
             verify_command: None,
             verify_script: None,
+            proof_script: None,
+            clauses: vec![],
         });
         assert!(render_failure_details_callout(&status).is_none());
 
@@ -350,6 +404,8 @@ mod tests {
                 iterations: None,
                 verify_command: None,
                 verify_script: None,
+                proof_script: None,
+                clauses: vec![],
             }))
             .is_none()
         );
@@ -364,6 +420,8 @@ mod tests {
             log_excerpt: Some("LLVM verification failed at line 42".into()),
             verify_command: None,
             verify_script: None,
+            proof_script: None,
+            clauses: vec![],
         });
         let out = render_failure_details_callout(&status).expect("callout present");
         assert!(out.contains("Why this failed"), "header missing: {out}");
@@ -377,10 +435,17 @@ mod tests {
         );
         assert!(out.contains("x = 0"), "counterexample body missing: {out}");
         assert!(
-            out.contains("<details><summary>Verifier log excerpt</summary>"),
+            out.contains("<details><summary>Complete verifier diagnostics</summary>"),
             "log fold missing: {out}"
         );
         assert!(out.contains("line 42"), "log body missing: {out}");
+        assert_eq!(
+            out.matches("navigator.clipboard.writeText").count(),
+            2,
+            "copy buttons missing: {out}"
+        );
+        assert!(out.contains("aria-label=\"Copy counterexample\""));
+        assert!(out.contains("aria-label=\"Copy verifier log\""));
     }
 
     #[test]
