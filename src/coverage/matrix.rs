@@ -14,7 +14,7 @@ pub fn render_coverage_matrix(ledger: &Ledger) -> String {
         "> **What this page is.** Every function in the union of (the \
          Cryptol model) and (the production codebase, as reported by the \
          implementation inventory) is listed here exactly once, classified \
-         by one of five badges. Functions that are *implemented but \
+         by its proof/coverage status. Functions that are *implemented but \
          unverified* are listed by default — silence is impossible. To \
          drop a helper from this page, add it to `coverage.toml` under \
          `[exclude].functions`; excluded names are reported as a count at \
@@ -33,6 +33,7 @@ pub fn render_coverage_content(ledger: &Ledger) -> String {
     render_summary(&mut out, ledger);
 
     for badge in [
+        CoverageBadge::Disproved,
         CoverageBadge::Unverified,
         CoverageBadge::Proven,
         CoverageBadge::ProvenBounded,
@@ -65,6 +66,7 @@ pub fn render_coverage_content(ledger: &Ledger) -> String {
 
 fn render_summary(out: &mut String, ledger: &Ledger) {
     let total = ledger.entries.len();
+    let n_disproved = ledger.count(CoverageBadge::Disproved);
     let n_proven = ledger.count(CoverageBadge::Proven);
     let n_bounded = ledger.count(CoverageBadge::ProvenBounded);
     let n_trusted = ledger.count(CoverageBadge::TrustedAssumption);
@@ -75,6 +77,7 @@ fn render_summary(out: &mut String, ledger: &Ledger) {
     let _ = writeln!(out, "| Badge | Meaning | Count |");
     let _ = writeln!(out, "|-------|---------|-------|");
     for (badge, count) in [
+        (CoverageBadge::Disproved, n_disproved),
         (CoverageBadge::Proven, n_proven),
         (CoverageBadge::ProvenBounded, n_bounded),
         (CoverageBadge::TrustedAssumption, n_trusted),
@@ -85,6 +88,16 @@ fn render_summary(out: &mut String, ledger: &Ledger) {
         let _ = writeln!(out, "| {} | {} | {count} |", badge.emoji(), badge.label());
     }
     let _ = writeln!(out, "| | **Total** | **{total}** |\n");
+    if n_disproved > 0 {
+        let _ = writeln!(
+            out,
+            "> ❌ **{n_disproved} proof attempt{plural} found a concrete counterexample.** \
+             The claimed implementation/model equivalence is disproved; inspect the \
+             witness{witness_plural} below.\n",
+            plural = if n_disproved == 1 { "" } else { "s" },
+            witness_plural = if n_disproved == 1 { "" } else { "es" },
+        );
+    }
     if n_unv > 0 {
         let _ = writeln!(
             out,
@@ -144,6 +157,9 @@ fn render_badge_section(out: &mut String, ledger: &Ledger, badge: CoverageBadge)
 
 fn section_lede(badge: CoverageBadge) -> &'static str {
     match badge {
+        CoverageBadge::Disproved => {
+            "Proof attempts that produced concrete counterexamples. Each witness below is an input that refutes the claimed implementation/model equivalence."
+        }
         CoverageBadge::Proven => "Machine-checked equivalence on all ABI inputs.",
         CoverageBadge::ProvenBounded => {
             "Equivalence proven only up to an iteration / size bound. The general-`n` case is a prose structural argument."
@@ -304,8 +320,20 @@ fn notes_cell(entry: &LedgerEntry) -> String {
                 }
             }
             ProofStatus::Assumed => parts.push("assumed".into()),
-            ProofStatus::Failed { reason, .. } => {
-                parts.push(format!("failed: {}", escape_cell(reason)));
+            ProofStatus::Failed {
+                reason,
+                counterexample,
+                ..
+            } => {
+                let verdict = if entry.badge == CoverageBadge::Disproved {
+                    "disproved"
+                } else {
+                    "failed"
+                };
+                parts.push(format!("{verdict}: {}", escape_cell(reason)));
+                if counterexample.is_some() {
+                    parts.push("counterexample shown below".into());
+                }
             }
             ProofStatus::NotAttempted => parts.push("not attempted".into()),
         }
@@ -320,20 +348,36 @@ fn notes_cell(entry: &LedgerEntry) -> String {
 fn render_diagnostics(out: &mut String, rows: &[&LedgerEntry]) {
     for entry in rows {
         let Some(ProofStatus::Failed {
-            log_excerpt: Some(diagnostic),
+            counterexample,
+            log_excerpt,
             verify_script,
             ..
         }) = &entry.proof
         else {
             continue;
         };
+        if counterexample.is_none() && log_excerpt.is_none() {
+            continue;
+        }
         let display = entry.impl_name.as_deref().unwrap_or(&entry.name);
+        if let Some(witness) = counterexample {
+            let _ = writeln!(
+                out,
+                "<details open><summary>Counterexample — <code>{}</code></summary>\n",
+                escape_html(display)
+            );
+            render_copyable_text_block(out, witness, "Copy counterexample");
+            let _ = writeln!(out, "\n</details>\n");
+        }
+        let Some(diagnostic) = log_excerpt else {
+            continue;
+        };
         let _ = writeln!(
             out,
             "<details><summary>Complete verifier diagnostics — <code>{}</code></summary>\n",
             escape_html(display)
         );
-        render_copyable_text_block(out, diagnostic);
+        render_copyable_text_block(out, diagnostic, "Copy verifier log");
         if let Some(script) = verify_script {
             let file = std::path::Path::new(script)
                 .file_name()
@@ -349,12 +393,12 @@ fn render_diagnostics(out: &mut String, rows: &[&LedgerEntry]) {
     }
 }
 
-fn render_copyable_text_block(out: &mut String, text: &str) {
+fn render_copyable_text_block(out: &mut String, text: &str, copy_label: &str) {
     let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
     let _ = writeln!(out, "{fence}text\n{}\n{fence}", text.trim_end());
     let _ = writeln!(
         out,
-        "\n<button type=\"button\" class=\"btn btn-default btn-xs\" aria-label=\"Copy verifier log\" onclick=\"navigator.clipboard.writeText(this.previousElementSibling.textContent)\">Copy</button>"
+        "\n<button type=\"button\" class=\"btn btn-default btn-xs\" aria-label=\"{copy_label}\" onclick=\"navigator.clipboard.writeText(this.previousElementSibling.textContent)\">Copy</button>"
     );
 }
 

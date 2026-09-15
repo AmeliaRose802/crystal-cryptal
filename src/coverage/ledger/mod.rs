@@ -2,7 +2,7 @@
 // the implementation inventory, and the `coverage.toml` overrides.
 //
 // The ledger is the set (Implementation ∪ Model). Each entry is classified
-// into exactly one of five badges. See module docs for the rationale.
+// into exactly one proof/coverage badge. See module docs for the rationale.
 
 mod badge;
 mod classify;

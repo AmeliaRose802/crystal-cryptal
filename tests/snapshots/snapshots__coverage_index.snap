@@ -8,6 +8,7 @@ expression: content
 
 | Badge | Meaning | Count |
 |-------|---------|-------|
+| ❌ | Disproved | 0 |
 | ✅ | Proven | 0 |
 | 🔲 | Proven (bounded) | 0 |
 | 🔒 | Trusted assumption | 2 |

@@ -1,10 +1,13 @@
-// Coverage taxonomy: the five-state badge and the reason codes for the
+// Coverage taxonomy: proof/coverage badges and the reason codes for the
 // implemented-but-unverified state.
 
-/// Five-state coverage taxonomy. See `01-coverage-clarity.md` at the repo
+/// Coverage taxonomy. See `01-coverage-clarity.md` at the repo
 /// root for the design.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoverageBadge {
+    /// A proof attempt produced a concrete counterexample, refuting the
+    /// claimed implementation/model equivalence.
+    Disproved,
     /// Machine-checked equivalence across **all** ABI inputs.
     Proven,
     /// Proven only up to an iteration / size bound (the `iterations`
@@ -29,6 +32,7 @@ pub enum CoverageBadge {
 impl CoverageBadge {
     pub fn emoji(self) -> &'static str {
         match self {
+            CoverageBadge::Disproved => "❌",
             CoverageBadge::Proven => "✅",
             CoverageBadge::ProvenBounded => "🔲",
             CoverageBadge::TrustedAssumption => "🔒",
@@ -40,6 +44,7 @@ impl CoverageBadge {
 
     pub fn label(self) -> &'static str {
         match self {
+            CoverageBadge::Disproved => "Disproved",
             CoverageBadge::Proven => "Proven",
             CoverageBadge::ProvenBounded => "Proven (bounded)",
             CoverageBadge::TrustedAssumption => "Trusted assumption",

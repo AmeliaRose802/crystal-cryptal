@@ -11,12 +11,13 @@ use super::directive::{CoverageDirective, DirectiveKind};
 
 pub(super) fn badge_order(b: CoverageBadge) -> u8 {
     match b {
-        CoverageBadge::Unverified => 0,
-        CoverageBadge::ProvenBounded => 1,
-        CoverageBadge::Proven => 2,
-        CoverageBadge::TrustedAssumption => 3,
-        CoverageBadge::AbiAdapter => 4,
-        CoverageBadge::SpecOnly => 5,
+        CoverageBadge::Disproved => 0,
+        CoverageBadge::Unverified => 1,
+        CoverageBadge::ProvenBounded => 2,
+        CoverageBadge::Proven => 3,
+        CoverageBadge::TrustedAssumption => 4,
+        CoverageBadge::AbiAdapter => 5,
+        CoverageBadge::SpecOnly => 6,
     }
 }
 
@@ -59,6 +60,18 @@ pub(super) fn classify(
         };
     }
 
+    // A solver counterexample is stronger and more actionable than a generic
+    // verification failure: the claimed equivalence has been refuted.
+    if let Some(Some(ProofStatus::Failed {
+        reason,
+        counterexample,
+        ..
+    })) = proof
+        && (counterexample.is_some() || failure_reason_is_disproof(reason))
+    {
+        return CoverageBadge::Disproved;
+    }
+
     // Implementation-side with no proof → unverified.
     if inventory.is_some() {
         return CoverageBadge::Unverified;
@@ -67,6 +80,13 @@ pub(super) fn classify(
     // Model-only function with neither proof nor implementation linkage is
     // effectively spec-only in this taxonomy.
     CoverageBadge::SpecOnly
+}
+
+fn failure_reason_is_disproof(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    ["counterexample", "disproved", "not equivalent"]
+        .iter()
+        .any(|marker| reason.contains(marker))
 }
 
 pub(super) fn collect_reason_codes(

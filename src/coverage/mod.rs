@@ -7,6 +7,8 @@
 // for the design rationale.
 
 mod config;
+#[cfg(test)]
+mod disproved_tests;
 mod inventory;
 mod ledger;
 mod matrix;

@@ -44,6 +44,7 @@ pub fn function_status_cell(
 pub fn function_banner(ledger: Option<&Ledger>, name: &str) -> Option<String> {
     let entry = ledger?.lookup(name)?;
     let body = match entry.badge {
+        CoverageBadge::Disproved => disproved_banner(entry),
         CoverageBadge::Proven => return None,
         CoverageBadge::ProvenBounded => bounded_banner(entry),
         CoverageBadge::TrustedAssumption => trusted_assumption_banner(entry),
@@ -52,6 +53,17 @@ pub fn function_banner(ledger: Option<&Ledger>, name: &str) -> Option<String> {
         CoverageBadge::SpecOnly => spec_only_banner(entry),
     };
     Some(format!("> {body}\n\n"))
+}
+
+fn disproved_banner(entry: &LedgerEntry) -> String {
+    let reason = match &entry.proof {
+        Some(ProofStatus::Failed { reason, .. }) => format!(" {reason}."),
+        _ => String::new(),
+    };
+    "❌ **Disproved.** The verifier found a concrete counterexample that \
+     refutes the claimed implementation/model equivalence."
+        .to_string()
+        + &reason
 }
 
 /// Link a model function page to its corresponding production implementation.

@@ -4,12 +4,13 @@ expression: md
 ---
 # Coverage Matrix
 
-> **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by one of five badges. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
+> **What this page is.** Every function in the union of (the Cryptol model) and (the production codebase, as reported by the implementation inventory) is listed here exactly once, classified by its proof/coverage status. Functions that are *implemented but unverified* are listed by default — silence is impossible. To drop a helper from this page, add it to `coverage.toml` under `[exclude].functions`; excluded names are reported as a count at the bottom, never silently dropped.
 
 ## Coverage summary
 
 | Badge | Meaning | Count |
 |-------|---------|-------|
+| ❌ | Disproved | 0 |
 | ✅ | Proven | 0 |
 | 🔲 | Proven (bounded) | 0 |
 | 🔒 | Trusted assumption | 2 |
