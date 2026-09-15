@@ -148,6 +148,12 @@ fn pipeline_forwards_current_cli_shape_and_supports_repeated_directories() {
     assert!(proof_script.contains("llvm_load_module \"fixture.bc\""));
     assert!(proof_script.contains("// override: _Mtx_lock  [declare-only]"));
     assert!(proof_script.contains("// uninterpreted: fixtureEq (symbol: fixture_eq)"));
+    assert_eq!(function["overall"]["clauses"].as_array().unwrap().len(), 2);
+    assert_eq!(function["overall"]["clauses"][1]["region"], "state");
+    let command = function["overall"]["verify_command"].as_str().unwrap();
+    assert!(command.starts_with("saw-spec-gen verify-cpp"));
+    assert!(!command.contains("//?/"));
+    assert!(!command.contains(&project.root.to_string_lossy().replace('\\', "/")));
 }
 
 #[test]

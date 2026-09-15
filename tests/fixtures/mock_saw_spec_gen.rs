@@ -127,12 +127,14 @@ fn main() {
         ("", "VERIFIED", "")
     };
     let json = format!(
-        "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  {}\n  \"verdict\": \"{}\",\n  {}\n  \"counterexample\": [],\n  \"solver\": \"z3\",\n  \"impl_file\": \"{}\"\n}}\n",
+        "{{\n  \"schema_version\": \"1\",\n  \"side\": \"cpp\",\n  \"function\": \"{}\",\n  \"cryptol_fn\": \"{}\",\n  {}\n  \"verdict\": \"{}\",\n  {}\n  \"counterexample\": [],\n  \"contract\": {{\n    \"clauses\": [\n      {{\"name\":\"return\",\"cryptol_fn\":\"{}\",\"assertion\":\"llvm_return\",\"region\":null,\"projection\":null}},\n      {{\"name\":\"state\",\"cryptol_fn\":\"{}\",\"assertion\":\"llvm_points_to\",\"region\":\"state\",\"projection\":null}}\n    ]\n  }},\n  \"solver\": \"z3\",\n  \"impl_file\": \"{}\"\n}}\n",
         escape_json(&function),
         escape_json(&cryptol_fn),
         status,
         verdict,
         reason,
+        escape_json(&cryptol_fn),
+        escape_json(&cryptol_fn),
         escape_json(impl_name),
     );
     fs::write(output.join(Path::new("result.json")), json).unwrap();

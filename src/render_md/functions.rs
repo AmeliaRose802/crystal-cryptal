@@ -19,6 +19,7 @@ use super::proof::{
     proof_detail_line, render_failure_details_callout, render_proof_details_callout,
     render_verify_command_section,
 };
+use super::proof_contract::render_implementation_contract;
 use super::saw_explain::{render_generated_script, render_saw_explanation};
 use super::signature::{extract_param_names, parse_signature, render_structured_signature};
 use super::util::{
@@ -93,6 +94,16 @@ pub(super) fn render_function_files(
             }
             if let Some(callout) = render_failure_details_callout(proof_status) {
                 out.push_str(&callout);
+            }
+            if let Some(contract) = render_implementation_contract(
+                name,
+                proof_status,
+                items,
+                symbols,
+                options.ledger.as_ref(),
+                &current_file,
+            ) {
+                out.push_str(&contract);
             }
             if let Some(explanation) = render_saw_explanation(proof_status) {
                 out.push_str(&explanation);

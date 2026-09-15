@@ -51,6 +51,7 @@ fn proven_with_script(script: &str) -> Option<ProofStatus> {
         verify_command: None,
         verify_script: Some("verify_out/out_provision/verify.saw".into()),
         proof_script: Some(script.into()),
+        clauses: vec![],
     })
 }
 
@@ -98,6 +99,7 @@ fn omits_the_section_when_no_embedded_script_is_available() {
         verify_command: None,
         verify_script: Some("verify.saw".into()),
         proof_script: None,
+        clauses: vec![],
     });
     assert!(render_saw_explanation(&status).is_none());
     assert!(render_generated_script(&status).is_none());

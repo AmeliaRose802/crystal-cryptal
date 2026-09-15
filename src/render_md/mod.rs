@@ -19,6 +19,7 @@ mod functions;
 mod index;
 mod mermaid;
 mod proof;
+mod proof_contract;
 mod properties;
 mod saw_explain;
 mod signature;

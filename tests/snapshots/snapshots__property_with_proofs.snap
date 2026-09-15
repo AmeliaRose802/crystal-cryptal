@@ -24,6 +24,8 @@ can never return Succeeded.
 
 ### Verify this yourself
 
+Prerequisites: install **SAW**, the selected solver, and **saw-spec-gen**; then run this from the repository root.
+
 Re-run the proof locally:
 
 ```sh

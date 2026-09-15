@@ -91,6 +91,7 @@ pub fn try_parse_verdict(line: &str) -> Option<ProofStatus> {
             verify_command: None,
             verify_script: None,
             proof_script: None,
+            clauses: vec![],
         })
     } else if trimmed.starts_with("Counterexample")
         || trimmed.starts_with("Invalid")
@@ -103,6 +104,7 @@ pub fn try_parse_verdict(line: &str) -> Option<ProofStatus> {
             verify_command: None,
             verify_script: None,
             proof_script: None,
+            clauses: vec![],
         })
     } else {
         None
@@ -200,6 +202,7 @@ mod tests {
             verify_command: None,
             verify_script: None,
             proof_script: None,
+            clauses: vec![],
         }
     }
     fn failed() -> ProofStatus {
@@ -210,6 +213,7 @@ mod tests {
             verify_command: None,
             verify_script: None,
             proof_script: None,
+            clauses: vec![],
         }
     }
 

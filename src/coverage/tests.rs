@@ -22,6 +22,7 @@ fn proven(iters: Option<u64>) -> ProofStatus {
         verify_command: None,
         verify_script: None,
         proof_script: None,
+        clauses: vec![],
     }
 }
 

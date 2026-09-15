@@ -5,7 +5,7 @@ use pretty_specs::coverage::{
     CoverageConfig, ImplementationInventory, InventoryEntry, build_ledger, load_coverage_config,
     load_inventory, render_coverage_content, render_coverage_matrix,
 };
-use pretty_specs::ir::{Item, ProofStatus, load_proof_manifest};
+use pretty_specs::ir::{Item, ProofClause, ProofStatus, load_proof_manifest};
 use pretty_specs::linker::SymbolTable;
 use pretty_specs::parser::parse;
 use pretty_specs::render_md::{RenderOptions, render_multi_file, render_single_file};
@@ -310,9 +310,40 @@ private
                     time_secs: Some(0.2),
                     overrides: vec![],
                     iterations: None,
-                    verify_command: None,
-                    verify_script: None,
-                    proof_script: None,
+                    verify_command: Some("saw-spec-gen verify-cpp --cpp-file cpp/src/proven.cpp --cryptol-spec specs/CoverageAcceptance.cry --cryptol-fn provenModel --function provenImpl --output verify_out/out_provenModel --config=specs/CoverageAcceptance.toml".into()),
+                    verify_script: Some("verify_out/out_provenModel/verify.saw".into()),
+                    proof_script: Some(r#"// Step 1: Load bitcode
+m <- llvm_load_module "proven.bc";
+// Step 3: Equivalence spec
+let proven_spec = do {
+    this_ptr <- llvm_alloc_aligned 8 (llvm_array 152 (llvm_int 8));
+    this_pre <- llvm_fresh_var "this_pre" (llvm_array 152 (llvm_int 8));
+    // sret: aggregate return passed via hidden output pointer.
+    result_ptr <- llvm_alloc_aligned 8 (llvm_array 72 (llvm_int 8));
+    preBytes <- llvm_fresh_var "preBytes" (llvm_array 72 (llvm_int 8));
+    llvm_precond {{ (this_pre @ 128) <= 1 }};
+    llvm_execute_func [this_ptr, result_ptr];
+    llvm_points_to this_ptr (llvm_term {{ internalPost (this_pre @ 0) }});
+    llvm_points_to_at_type result_ptr (llvm_array 65 (llvm_int 8)) (llvm_term {{ provenModel (this_pre @ 0) }});
+};
+llvm_verify m "?provenImpl@@YA_N_N@Z" [] false proven_spec z3;
+"#.into()),
+                    clauses: vec![
+                        ProofClause {
+                            name: "return".into(),
+                            cryptol_fn: "provenModel".into(),
+                            assertion: "llvm_points_to_at_type".into(),
+                            region: None,
+                            projection: None,
+                        },
+                        ProofClause {
+                            name: "this".into(),
+                            cryptol_fn: "internalPost".into(),
+                            assertion: "llvm_points_to".into(),
+                            region: Some("this".into()),
+                            projection: None,
+                        },
+                    ],
                 }),
                 "unverifiedModel" => Some(ProofStatus::Failed {
                     reason: "unsupported type: %reference".into(),
@@ -324,6 +355,7 @@ private
                     verify_command: None,
                     verify_script: Some("verify_out/out_unverified/generated.saw".into()),
                     proof_script: None,
+                    clauses: vec![],
                 }),
                 _ => None,
             };
@@ -430,6 +462,18 @@ private
     ));
     assert!(unverified_page.contains("aria-label=\"Copy verifier log\""));
     assert!(unverified_page.contains("```cpp\n  if (!ready) return false;\n```"));
+    let proven_page = fs::read_to_string(dir.join("functions").join("provenModel.md")).unwrap();
+    assert!(proven_page.contains("**2 observable contract clauses**"));
+    assert!(proven_page.contains("| Return value |"));
+    assert!(proven_page.contains("| `this` post-state |"));
+    assert!(proven_page.contains("parts of one implementation proof"));
+    assert!(proven_page.contains("**ABI note:** the return value uses **sret**"));
+    assert!(proven_page.contains("remaining **7 padding bytes**"));
+    assert!(proven_page.contains("canonical C++ Boolean representation"));
+    assert!(proven_page.contains("```mermaid\nflowchart LR"));
+    assert!(proven_page.contains("Proof-relevant sources"));
+    assert!(proven_page.contains("--config=specs/CoverageAcceptance.toml"));
+    assert!(!proven_page.contains("C:/Users/") && !proven_page.contains("//?/"));
     fs::write(dir.join("coverage.md"), &matrix).unwrap();
     let home = fs::read_to_string(dir.join("index.md")).unwrap();
     assert!(home.contains(&shared), "home and coverage content diverged");
@@ -525,6 +569,19 @@ fn assert_docfx_coverage_table(dir: &Path) {
             || function_html.contains("<code class=\"language-cpp\">"),
         "C++ implementation body was not syntax highlighted"
     );
+    let proven_html = fs::read_to_string(dir.join("_site/functions/provenModel.html")).unwrap();
+    assert!(proven_html.contains("2 observable contract clauses"));
+    assert!(proven_html.contains("Return value") && proven_html.contains("post-state"));
+    assert!(proven_html.contains("class=\"proof-clause\""));
+    assert!(!proven_html.contains("Unsupported markdown"));
+    assert!(!proven_html.contains("[`provenModel`]"));
+    assert!(
+        proven_html.contains("class=\"lang-mermaid\"")
+            || proven_html.contains("class=\"language-mermaid\"")
+            || proven_html.contains("class=\"mermaid\"")
+    );
+    assert!(proven_html.contains("Show complete generated script"));
+    assert!(!proven_html.contains("C:/Users/") && !proven_html.contains("//?/"));
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────

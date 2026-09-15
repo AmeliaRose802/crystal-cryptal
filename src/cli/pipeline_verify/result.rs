@@ -91,9 +91,9 @@ pub(super) fn enrich_result(out_dir: &Path, output: &Output, program: &str, argv
         }
         object.insert("log_excerpt".into(), serde_json::json!(diagnostic));
     }
-    object.entry("verify_command").or_insert_with(|| {
-        serde_json::json!(normalize_machine_paths(&format_command(program, argv)))
-    });
+    object
+        .entry("verify_command")
+        .or_insert_with(|| serde_json::json!(portable_verify_command(program, argv)));
     if (!object.contains_key("verify_script") || !object.contains_key("proof_script"))
         && let Some(script) = find_generated_script(out_dir)
     {
@@ -188,14 +188,12 @@ fn diagnostic_score(candidate: &str) -> u8 {
 }
 
 fn normalize_machine_paths(text: &str) -> String {
+    let normalized = text.replace('\\', "/").replace("//?/", "");
     let Ok(cwd) = std::env::current_dir() else {
-        return text.replace('\\', "/");
+        return normalized;
     };
-    let cwd_native = cwd.to_string_lossy();
-    let cwd_slashes = cwd_native.replace('\\', "/");
-    text.replace(cwd_native.as_ref(), ".")
-        .replace(&cwd_slashes, ".")
-        .replace('\\', "/")
+    let cwd_slashes = cwd.to_string_lossy().replace('\\', "/");
+    normalized.replace(&cwd_slashes, ".")
 }
 
 fn format_command(program: &str, argv: &[String]) -> String {
@@ -210,6 +208,47 @@ fn format_command(program: &str, argv: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn portable_verify_command(_program: &str, argv: &[String]) -> String {
+    let command_start = argv
+        .iter()
+        .position(|argument| matches!(argument.as_str(), "verify-cpp" | "verify-rust"))
+        .unwrap_or(0);
+    let mut portable = vec!["saw-spec-gen".to_string()];
+    portable.extend(argv[command_start..].iter().map(|argument| {
+        normalize_machine_paths(argument)
+            .replace("//?/./", "")
+            .trim_start_matches("./")
+            .to_string()
+    }));
+
+    if let Some(spec) = option_value(&portable, "--cryptol-spec") {
+        let committed_config = std::path::Path::new(&spec).with_extension("toml");
+        if committed_config.is_file() {
+            let replacement = format!("--config={}", committed_config.to_string_lossy());
+            for argument in &mut portable {
+                if argument.starts_with("--config=") {
+                    *argument = replacement.clone();
+                }
+            }
+        }
+    }
+    format_command(&portable[0], &portable[1..])
+}
+
+fn option_value(arguments: &[String], option: &str) -> Option<String> {
+    let joined = format!("{option}=");
+    arguments.iter().enumerate().find_map(|(index, argument)| {
+        argument
+            .strip_prefix(&joined)
+            .map(str::to_string)
+            .or_else(|| {
+                (argument == option)
+                    .then(|| arguments.get(index + 1).cloned())
+                    .flatten()
+            })
+    })
 }
 
 struct GeneratedScript {
@@ -293,4 +332,5 @@ mod tests {
             Some("Type mismatch: expected [256], found [16]")
         );
     }
+
 }

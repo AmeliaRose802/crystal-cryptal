@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::ProofStatus;
+use super::{ProofClause, ProofStatus};
 
 /// Helper for deserializing proof manifest entries using `#[serde(tag = "status")]`.
 #[derive(Debug, Deserialize)]
@@ -25,6 +25,8 @@ pub(super) enum ManifestEntry {
         verify_script: Option<String>,
         #[serde(default)]
         proof_script: Option<String>,
+        #[serde(default)]
+        clauses: Vec<ProofClause>,
     },
     Assumed,
     Failed {
@@ -39,6 +41,8 @@ pub(super) enum ManifestEntry {
         verify_script: Option<String>,
         #[serde(default)]
         proof_script: Option<String>,
+        #[serde(default)]
+        clauses: Vec<ProofClause>,
     },
     NotAttempted,
 }
@@ -54,6 +58,7 @@ impl From<ManifestEntry> for ProofStatus {
                 verify_command,
                 verify_script,
                 proof_script,
+                clauses,
             } => ProofStatus::Proven {
                 solver,
                 time_secs,
@@ -62,6 +67,7 @@ impl From<ManifestEntry> for ProofStatus {
                 verify_command,
                 verify_script,
                 proof_script,
+                clauses,
             },
             ManifestEntry::Assumed => ProofStatus::Assumed,
             ManifestEntry::Failed {
@@ -71,6 +77,7 @@ impl From<ManifestEntry> for ProofStatus {
                 verify_command,
                 verify_script,
                 proof_script,
+                clauses,
             } => ProofStatus::Failed {
                 reason,
                 counterexample,
@@ -78,6 +85,7 @@ impl From<ManifestEntry> for ProofStatus {
                 verify_command,
                 verify_script,
                 proof_script,
+                clauses,
             },
             ManifestEntry::NotAttempted => ProofStatus::NotAttempted,
         }

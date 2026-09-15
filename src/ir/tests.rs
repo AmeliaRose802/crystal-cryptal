@@ -57,6 +57,7 @@ fn serde_round_trip() {
                 verify_command: None,
                 verify_script: None,
                 proof_script: None,
+                clauses: vec![],
             }),
             is_private: false,
         },
@@ -107,7 +108,15 @@ fn proof_manifest_nested_function_entry() {
         "properties": {},
         "functions": {
             "authenticate": {
-                "overall": { "status": "proven", "solver": "z3", "time_secs": 1.2 },
+                "overall": {
+                    "status": "proven",
+                    "solver": "z3",
+                    "time_secs": 1.2,
+                    "clauses": [
+                        {"name":"return","cryptol_fn":"authenticate","assertion":"llvm_return"},
+                        {"name":"state","cryptol_fn":"authenticatePost","assertion":"llvm_points_to","region":"state"}
+                    ]
+                },
                 "by_language": {
                     "cpp": { "status": "proven", "solver": "z3", "time_secs": 1.2 }
                 }
@@ -142,6 +151,11 @@ fn proof_manifest_nested_function_entry() {
     assert!(matches!(
         manifest.functions.get("authenticate").unwrap(),
         ProofStatus::Proven { solver, .. } if solver == "z3"
+    ));
+    assert!(matches!(
+        manifest.functions.get("authenticate").unwrap(),
+        ProofStatus::Proven { clauses, .. }
+            if clauses.len() == 2 && clauses[1].region.as_deref() == Some("state")
     ));
     assert!(matches!(
         manifest.functions.get("getStatus").unwrap(),
